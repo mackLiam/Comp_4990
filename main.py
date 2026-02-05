@@ -1,43 +1,44 @@
-import cv2
-import numpy as np
-from ultralytics import YOLO
+import os
+import cv2 as cv
+from src.detector import Detector
+from src.video_handler import VideoHandler
+from src.utils import draw_detections
 
-def test_opencv():
-    """Test if OpenCV is installed correctly"""
-    print(f"OpenCV version: {cv2.__version__}")
-    print("✓ OpenCV installed successfully")
+def main():
+    # 1. Paths relative to this project root
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    video_path = os.path.join(project_root, 'data', 'input_videos', 'videoTest.mp4')
+    output_path = os.path.join(project_root, 'data', 'output_videos', 'output.mp4')
 
-def test_yolo():
-    """Test if YOLO is installed correctly"""
+    # 2. Init modules
     try:
-        # This will download the model first time (takes a minute)
-        model = YOLO('yolov8n.pt')  # nano version (smallest)
-        print("✓ YOLO installed successfully")
-        return model
+        detector = Detector()
+        handler = VideoHandler(video_path, output_path)
     except Exception as e:
-        print(f"✗ YOLO installation failed: {e}")
-        return None
+        print(f"Error starting program: {e}")
+        return
 
-def test_basic_detection():
-    """Test YOLO on a simple test image"""
-    model = YOLO('yolov8n.pt')
-    
-    # Create a simple test image (blue square)
-    test_img = np.zeros((640, 640, 3), dtype=np.uint8)
-    test_img[200:400, 200:400] = [255, 0, 0]  # Blue square
-    
-    # Run detection
-    results = model(test_img)
-    print("✓ Basic detection test completed")
-    print(f"  Detected {len(results[0].boxes)} objects")
+    print("Processing video (In-Memory)... Press 'q' to quit.")
+
+    # 3. Processing Loop
+    while True:
+        ret, frame = handler.get_frame()
+        if not ret:
+            break
+        
+        # Detection -> Drawing -> Saving
+        results = detector.detect(frame)
+        processed_frame = draw_detections(frame, results)
+        
+        handler.write_frame(processed_frame)
+        cv.imshow('Modular YOLO Detection', processed_frame)
+
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    # 4. Cleanup
+    handler.release()
+    print(f"Finished! Output saved to: {output_path}")
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Environment Setup Verification")
-    print("=" * 50)
-    
-    test_opencv()
-    test_yolo()
-    test_basic_detection()
-    
-    print("\n✓ All tests passed! Environment is ready.")
+    main()
