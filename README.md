@@ -12,7 +12,7 @@ Computer vision system for object detection, tracking, and 3D reconstruction.
 ### 1. Clone the repository
 ```bash
 git clone https://github.com/yourusername/your-repo-name.git
-cd your-repo-name
+cd Comp_4990
 ```
 
 ### 2. Create virtual environment

@@ -1,5 +1,9 @@
 import cv2 as cv
 
+"""
+This module handles drawing bounding boxes and labels on the frame.
+"""
+
 def draw_detections(frame, detections):
     """
     Draws bounding boxes and labels on the frame.

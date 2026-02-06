@@ -1,5 +1,9 @@
 from ultralytics import YOLO
 
+"""
+This module handles YOLO detection.
+"""
+
 class Detector:
     def __init__(self, model_path='yolov8n.pt'):
         """Initializes the YOLO detector."""
