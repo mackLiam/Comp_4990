@@ -1,30 +1,51 @@
 import os
 import cv2 as cv
-import numpy as np
 import open3d as o3d
+import time
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
+from src.point_cloud import PointCloudGenerator as pcg, CameraProperties
 
+# Constants
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4')
+RTSP_URL = "rtsp://192.168.2.17:8554/stream"
+OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
+
+RGB_IMAGE_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'image', '0000001-000000020431.jpg')
+DEPTH_IMAGE_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'depth', '0000001-000000000000.png')
+INTRINSICS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'intrinsics.txt')
+RGBD_VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1')
+
+def clear_screen():
+    """Clear the terminal screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def show_menu_header(title):
+    """Display a standardized menu header."""
+    clear_screen()
+    print("\n" + "="*40)
+    print(f" {title} ")
+    print("="*40)
 
 def run_object_detection():
     """Run the YOLO object detection on video source."""
+    show_menu_header("YOLO VIDEO SOURCE SELECTOR")
+
     # Configuration
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    local_video = os.path.join(project_root, 'data', 'input_videos', 'videoTest.mp4')
-    rtsp_url = "rtsp://192.168.2.17:8554/stream"
-    output_path = os.path.join(project_root, 'data', 'output_videos', 'output.mp4')
-    
-    # Terminal Menu
-    print("\n" + "="*30)
-    print(" YOLO VIDEO SOURCE SELECTOR ")
-    print("="*30)
+    local_video = LOCAL_VIDEO_PATH
+    rtsp_url = RTSP_URL
+    output_path = OUTPUT_PATH
+
     print("1. Local Video File (videoTest.mp4)")
     print("2. Laptop Webcam")
     print("3. Phone Camera (RTSP)")
-    print("="*30)
-    
-    choice = input("\nSelect an option (1-3): ").strip()
+    print("4. Back to Main Menu")
+    print("="*40)
+
+    choice = input("\nSelect an option (1-4): ").strip()
 
     if choice == '1':
         source = local_video
@@ -32,8 +53,11 @@ def run_object_detection():
         source = 0
     elif choice == '3':
         source = rtsp_url
+    elif choice == '4':
+        return
     else:
-        print("Invalid choice. Exiting.")
+        print("Invalid choice. Returning to main menu...")
+        time.sleep(1)
         return
 
     # Initialize Modules
@@ -55,11 +79,11 @@ def run_object_detection():
         if not ret:
             print("Finished or lost connection to source.")
             break
-        
+
         # Detection -> Drawing
         results = detector.detect(frame)
         processed_frame = draw_detections(frame, results)
-        
+
         # Save original resolution
         handler.write_frame(processed_frame)
 
@@ -82,138 +106,83 @@ def run_object_detection():
     cv.destroyAllWindows()
     print(f"\nProcessing complete! Results saved to: {output_path}")
 
-def load_intrinsics(intrinsics_path):
-    """Load camera intrinsic parameters from a text file.
+def generate_from_image():
+    """Generate point cloud from a single RGB-D image pair."""
+    show_menu_header("GENERATE FROM IMAGE")
 
-    The file contains a 3x3 camera matrix in row-major order as space-separated values:
-    [fx 0 cx]
-    [0 fy cy]
-    [0  0  1]
-
-    Args:
-        intrinsics_path: Path to the intrinsics file
-
-    Returns:
-        dict: Dictionary containing the intrinsic parameters (fx, fy, cx, cy)
-    """
-    try:
-        with open(intrinsics_path, 'r') as f:
-            values = list(map(float, f.readline().strip().split()))
-            
-            # Extract the camera matrix values
-            # The values are in order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-            intrinsics = {
-                'fx': values[0],  # fx
-                'fy': values[4],  # fy
-                'cx': values[2],  # cx
-                'cy': values[5]   # cy
-            }
-            
-            return intrinsics
-    except Exception as e:
-        print(f"Error loading intrinsics from {intrinsics_path}: {e}")
-        print("Using default Kinect v1 intrinsics")
-        return {'fx': 525.0, 'fy': 525.0, 'cx': 319.5, 'cy': 239.5}
-
-def generate_points():
-    print("\n" + "="*30)
-    print(" POINT CLOUD GENERATION")
-    print("="*30)
-
-    # Load camera intrinsics
-    intrinsics = load_intrinsics('./data/input_RGBD_images/NYU0001/intrinsics.txt')
-    fx = intrinsics['fx']
-    fy = intrinsics['fy']
-    cx = intrinsics['cx']
-    cy = intrinsics['cy']
-
-    print(f"Using camera intrinsics:")
-    print(f"  fx: {fx}, fy: {fy}")
-    print(f"  cx: {cx}, cy: {cy}")
+    # Load images and intrinsics
+    rgb = cv.imread(RGB_IMAGE_PATH)
+    depth = cv.imread(DEPTH_IMAGE_PATH, cv.IMREAD_UNCHANGED)
+    intrinsics = CameraProperties.load_intrinsics(INTRINSICS_PATH)
     
-    # Load RGB and depth images
-    rgb_source = "./data/input_RGBD_images/NYU0001/NYU0001.jpg"
-    depth_source = "./data/input_RGBD_images/NYU0001/NYU0001.png"
-    rgb = cv.imread(rgb_source)
-    depth = cv.imread(depth_source, cv.IMREAD_UNCHANGED)
-
-    # Changing depth metric to meters
-    depth_m = depth.astype('float32') / 1000.0
-
     if rgb is None or depth is None:
         print("Error: Could not load input images")
         return
+    
+    # Generate point cloud
+    cloud = pcg.create_frame_cloud(rgb, depth, **intrinsics)
+    o3d.visualization.draw_geometries([cloud])
 
-    print("\nSuccessfully loaded RGB and depth images.")
-    print(f"RGB shape: {rgb.shape}, Depth shape: {depth.shape}")
+def generate_from_video_menu():
+    """Menu for video-based point cloud generation options."""
+    while True:
+        show_menu_header("VIDEO GENERATION OPTIONS")
+        print("1. Watch Video (Normal Playback)")
+        print("2. Generate Point Cloud from Video")
+        print("3. Back to Points Menu")
+        print("="*40)
 
-    print("\nBeginning point generation...")
+        choice = input("\nSelect an option (1-3): ").strip()
 
-    # Creating pixel coordinate grid
-    height, width = depth_m.shape[:2]
+        if choice == '1':
+            VideoHandler.play_from_images(os.path.join(RGBD_VIDEO_DIR, 'image'))
+        elif choice == '2':
+            pcg.generate_from_video(RGBD_VIDEO_DIR)
+        elif choice == '3':
+            break
+        else:
+            print("\nInvalid choice. Please try again.")
 
-    u_coords, v_coords = np.meshgrid(
-        np.arange(width),
-        np.arange(height)
-    )
+def generate_points_menu():
+    """Menu for point cloud generation options."""
+    while True:
+        show_menu_header("POINT CLOUD GENERATION")
+        print("1. Generate from Image")
+        print("2. Generate from Video")
+        print("3. Back to Main Menu")
+        print("="*40)
 
-    u = u_coords.flatten()
-    v = v_coords.flatten()
-    z = depth_m.flatten()
+        choice = input("\nSelect an option (1-3): ").strip()
 
-    # Filtering invalid depth values
-    valid = z > 0
-    u = u[valid]
-    v = v[valid]
-    z = z[valid]
-
-    # Projecting pixels to 3D points
-    x = (u - cx) * z / fx
-    y = (v - cy) * z / fy
-
-    # Creating point cloud
-    points = np.vstack((x, y, z)).T
-
-    rgb_flat = rgb.reshape(-1, 3)
-    colors = rgb_flat[valid] / 255.0
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    pcd.colors = o3d.utility.Vector3dVector(colors)
-
-    # Flip orientation upright
-    pcd.transform([
-        [1, 0, 0, 0],
-        [0,-1, 0, 0],
-        [0, 0,-1, 0],
-        [0, 0, 0, 1]
-    ])
-
-    o3d.visualization.draw_geometries([pcd])
+        if choice == '1':
+            generate_from_image()
+        elif choice == '2':
+            generate_from_video_menu()
+        elif choice == '3':
+            break
+        else:
+            print("\nInvalid choice. Please try again.")
 
 def main():
     """Main CLI entry point that allows selection between different functionalities."""
     while True:
-        print("\n" + "="*30)
-        print(" MAIN MENU ")
-        print("="*30)
+        show_menu_header("MAIN MENU")
         print("1. Run Object Detection")
         print("2. Generate Points")
         print("3. Exit")
-        print("="*30)
+        print("="*40)
         
         choice = input("\nSelect an option (1-3): ").strip()
         
         if choice == '1':
             run_object_detection()
         elif choice == '2':
-            generate_points()
+            generate_points_menu()
         elif choice == '3':
             print("\nExiting...")
             break
         else:
             print("\nInvalid choice. Please try again.")
-
 
 if __name__ == "__main__":
     main()
