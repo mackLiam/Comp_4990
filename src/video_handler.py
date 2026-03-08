@@ -59,15 +59,24 @@ class VideoHandler:
             print(f"Error: Image directory not found at {image_dir}")
             return
 
-        # Get and sort jpg files numerically
+        # Get and sort image files
+        allowed_ext = ('.jpg', '.jpeg', '.png')
         image_files = [
-            f for f in os.listdir(image_dir) 
-            if f.endswith('.jpg')
+            f for f in os.listdir(image_dir)
+            if f.lower().endswith(allowed_ext)
         ]
-        image_files.sort(key=lambda x: int(x.split('-')[0].lstrip('0')))
+
+        def sort_key(name):
+            stem, _ = os.path.splitext(name)
+            try:
+                return float(stem)
+            except ValueError:
+                return stem
+
+        image_files.sort(key=sort_key)
 
         if not image_files:
-            print("Error: No jpg files found in the image directory")
+            print("Error: No image files found in the image directory")
             return
 
         print(f"Found {len(image_files)} image files")

@@ -1,196 +1,188 @@
 import os
+import sys
 import cv2 as cv
 import numpy as np
 import open3d as o3d
-import sys
+
+
+class TUMCamera:
+    """TUM camera intrinsics presets."""
+
+    class FREIBURG1:
+        @staticmethod
+        def intrinsics():
+            return {
+                "fx": 517.3,
+                "fy": 516.5,
+                "cx": 318.6,
+                "cy": 255.3
+            }
+
 
 class CameraProperties:
-    """Handles camera intrinsic/extrinsic parameters loading."""
+    """Utilities for loading camera poses."""
 
     @staticmethod
-    def load_intrinsics(intrinsics_path):
-        """Load camera intrinsic parameters from a text file.
+    def quaternion_to_rotation_matrix(qx, qy, qz, qw):
+        """Convert quaternion to rotation matrix."""
 
-        Args:
-            intrinsics_path: Path to intrinsics file
+        R = np.array([
+            [
+                1 - 2*qy*qy - 2*qz*qz,
+                2*qx*qy - 2*qz*qw,
+                2*qx*qz + 2*qy*qw
+            ],
+            [
+                2*qx*qy + 2*qz*qw,
+                1 - 2*qx*qx - 2*qz*qz,
+                2*qy*qz - 2*qx*qw
+            ],
+            [
+                2*qx*qz - 2*qy*qw,
+                2*qy*qz + 2*qx*qw,
+                1 - 2*qx*qx - 2*qy*qy
+            ]
+        ])
 
-        Returns:
-            dict: Dictionary containing the intrinsic parameters (fx, fy, cx, cy)
-        """
-        try:
-            with open(intrinsics_path, 'r') as f:
-                lines = [line.strip() for line in f.readlines() if line.strip()]
-
-            if len(lines) < 3:
-                print(f"Warning: Invalid intrinsics format, using defaults")
-                return {'fx': 525.0, 'fy': 525.0, 'cx': 319.5, 'cy': 239.5}
-
-            # Parse 3x3 matrix: [fx, 0, cx], [0, fy, cy], [0, 0, 1]
-            fx, _, cx = map(float, lines[0].split())
-            _, fy, cy = map(float, lines[1].split())
-
-            return {'fx': fx, 'fy': fy, 'cx': cx, 'cy': cy}
-
-        except Exception as e:
-            print(f"Error loading intrinsics from {intrinsics_path}: {e}")
-            return {'fx': 525.0, 'fy': 525.0, 'cx': 319.5, 'cy': 239.5}
+        return R
 
     @staticmethod
-    def load_extrinsics(extrinsics_file):
-        """Load and parse extrinsics from a single file.
-
-        Args:
-            extrinsics_file: Path to extrinsics file
-
-        Returns:
-            list: List of 4x4 camera poses
+    def load_tum_groundtruth(path):
         """
-        if not os.path.exists(extrinsics_file):
-            print(f"Error: Extrinsics file not found at {extrinsics_file}")
-            return []
+        Load poses from TUM groundtruth file.
 
-        try:
-            with open(extrinsics_file, 'r') as f:
-                lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+        Format:
+        timestamp tx ty tz qx qy qz qw
+        """
 
-            rows = [list(map(float, ln.split())) for ln in lines]
-            poses = []
+        poses = []
 
-            for i in range(0, len(rows), 3):
-                block = np.array(rows[i:i + 3])  # 3x4
-                T = np.eye(4)
-                T[:3, :4] = block
-                poses.append(T)
-
-            print(f"Loaded {len(poses)} poses from {extrinsics_file}")
+        if not os.path.isfile(path):
+            print("Groundtruth file not found")
             return poses
 
-        except Exception as e:
-            print(f"Error parsing extrinsics file {extrinsics_file}: {e}")
-            return []
+        with open(path, "r") as f:
+
+            for line in f:
+
+                if line.startswith("#"):
+                    continue
+
+                parts = line.strip().split()
+
+                if len(parts) != 8:
+                    continue
+
+                _, tx, ty, tz, qx, qy, qz, qw = map(float, parts)
+
+                R = CameraProperties.quaternion_to_rotation_matrix(
+                    qx, qy, qz, qw
+                )
+
+                T = np.eye(4)
+                T[:3, :3] = R
+                T[:3, 3] = [tx, ty, tz]
+
+                poses.append(T)
+
+        return poses
+
 
 class PointCloudGenerator:
-    """Core point cloud generation functionality."""
 
     @staticmethod
-    def create_frame_cloud(rgb, depth, fx, fy, cx, cy, depth_scale=1000.0, flip_orientation=True):
-        """Create point cloud from one RGB-D frame.
+    def read_tum_file_list(filename):
+        data = {}
 
-        Args:
-            rgb: RGB image array
-            depth: Depth image array
-            fx, fy, cx, cy: Camera intrinsics
-            depth_scale: Scale factor for depth values (default: 1000.0)
-            flip_orientation: Whether to flip point cloud orientation (default: True)
+        with open(filename) as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
 
-        Returns:
-            Open3D PointCloud object
-        """
-        depth_m = depth.astype('float32') / depth_scale
+                parts = line.strip().split()
+                if len(parts) < 2:
+                    continue
 
-        height, width = depth_m.shape[:2]
+                timestamp = float(parts[0])
+                data[timestamp] = parts[1:]
 
-        u_coords, v_coords = np.meshgrid(
-            np.arange(width),
-            np.arange(height)
-        )
+        return data
 
-        u = u_coords.flatten()
-        v = v_coords.flatten()
-        z = depth_m.flatten()
+    @staticmethod
+    def associate(first_list, second_list, max_difference=0.02):
+        matches = []
+        first_keys = sorted(first_list.keys())
+        second_keys = sorted(second_list.keys())
 
-        # Filter invalid depth values
-        valid = z > 0
-        u = u[valid]
-        v = v[valid]
-        z = z[valid]
+        j = 0
+        for ts in first_keys:
+            while j + 1 < len(second_keys) and abs(second_keys[j + 1] - ts) <= abs(second_keys[j] - ts):
+                j += 1
+            if j < len(second_keys) and abs(second_keys[j] - ts) <= max_difference:
+                matches.append((ts, second_keys[j]))
 
-        # Project pixels to 3D points
-        x = (u - cx) * z / fx
-        y = (v - cy) * z / fy
-
-        # Create point cloud
-        points = np.vstack((x, y, z)).T
-        rgb_flat = rgb.reshape(-1, 3)
-        colors = rgb_flat[valid] / 255.0
-
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.colors = o3d.utility.Vector3dVector(colors)
-
-        # Flip orientation if requested
-        if flip_orientation:
-            pcd.transform([
-                [1, 0, 0, 0],
-                [0, -1, 0, 0],
-                [0, 0, -1, 0],
-                [0, 0, 0, 1]
-            ])
-
-        return pcd
+        return matches
 
     @staticmethod
     def generate_from_video(rgbd_video_dir):
-        """Generate point cloud from video sequence using TSDF fusion.
+        """Generate fused point cloud using TSDF."""
 
-        Args:
-            rgbd_video_dir: Path to the RGBD video directory containing image, depth, extrinsics, and intrinsics
-        """
-        rgb_dir = os.path.join(rgbd_video_dir, "image")
+        rgb_dir = os.path.join(rgbd_video_dir, "rgb")
         depth_dir = os.path.join(rgbd_video_dir, "depth")
-        intrinsics_path = os.path.join(rgbd_video_dir, "intrinsics.txt")
-        extrinsics_file = os.path.join(rgbd_video_dir, "extrinsics", "extrinsics.txt")
+        groundtruth_file = os.path.join(rgbd_video_dir, "groundtruth.txt")
 
         if not os.path.isdir(rgb_dir) or not os.path.isdir(depth_dir):
-            print(f"Error: Missing 'image' or 'depth' directory under {rgbd_video_dir}")
+            print("Missing rgb/ or depth/ directories.")
             return
 
-        # Load poses
-        print("Loading extrinsics...")
-        poses = CameraProperties.load_extrinsics(extrinsics_file)
+        print("Loading poses...")
+        poses = CameraProperties.load_tum_groundtruth(groundtruth_file)
 
-        if not poses:
-            print("Error: No camera poses loaded; cannot fuse frames")
+        if len(poses) == 0:
+            print("No poses loaded.")
             return
 
-        # Load intrinsics
-        intr = CameraProperties.load_intrinsics(intrinsics_path)
-        fx = intr.get('fx')
-        fy = intr.get('fy')
-        cx = intr.get('cx')
-        cy = intr.get('cy')
+        intr = TUMCamera.FREIBURG1.intrinsics()
 
-        # Frame lists
-        rgb_files = sorted(os.listdir(rgb_dir))
-        depth_files = sorted(os.listdir(depth_dir))
+        fx = intr["fx"]
+        fy = intr["fy"]
+        cx = intr["cx"]
+        cy = intr["cy"]
 
-        if not rgb_files or not depth_files:
-            print("Error: No RGB or depth frames found")
-            return
+        rgb_list = PointCloudGenerator.read_tum_file_list(
+            os.path.join(rgbd_video_dir, "rgb.txt")
+        )
+        depth_list = PointCloudGenerator.read_tum_file_list(
+            os.path.join(rgbd_video_dir, "depth.txt")
+        )
+        pose_list = PointCloudGenerator.read_tum_file_list(
+            os.path.join(rgbd_video_dir, "groundtruth.txt")
+        )
 
-        total = min(len(rgb_files), len(depth_files), len(poses))
-        print(f"\nFrames available: {total}")
+        rgb_depth_matches = PointCloudGenerator.associate(rgb_list, depth_list)
 
-        # Determine resolution dynamically from the first readable RGB frame
-        width  = None
-        height = None
-        img = cv.imread(os.path.join(rgb_dir, rgb_files[0]))
-        if img is not None:
-            height, width = img.shape[:2]
+        frames = []
+        for rgb_ts, depth_ts in rgb_depth_matches:
+            pose_ts = min(
+                pose_list.keys(),
+                key=lambda x: abs(x - rgb_ts)
+            )
+            frames.append((rgb_ts, depth_ts, pose_ts))
 
-        if width is None or height is None:
-            print("Error: Could not read any RGB frames to determine resolution")
-            return
+        total = len(frames)
+        print(f"Frames available: {total}")
 
-        intrinsic_o3d = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
+        first = cv.imread(os.path.join(rgbd_video_dir, rgb_list[frames[0][0]][0]))
+        height, width = first.shape[:2]
 
-        # Sampling
-        sample_rate = 25
-        print(f"Sampling every {sample_rate} frames")
+        intrinsic_o3d = o3d.camera.PinholeCameraIntrinsic(
+            width, height, fx, fy, cx, cy
+        )
 
-        # TSDF Volume settings
-        voxel_length = 0.02
-        sdf_trunc = 0.10
+        sample_rate = 5
+
+        voxel_length = 0.01
+        sdf_trunc = 0.04
 
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=voxel_length,
@@ -198,63 +190,70 @@ class PointCloudGenerator:
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
         )
 
-        # Integration loop
-        frame_indices = range(0, total, sample_rate)
-        total_samples = len(frame_indices)
+        frame_indices = range(0, len(frames), sample_rate)
+
+        print("Integrating frames...")
+
         processed = 0
+        total_samples = len(list(frame_indices))
+
         for i in frame_indices:
+
             processed += 1
-            sys.stdout.write(f"\rIntegrating frame {processed}/{total_samples}")
+            sys.stdout.write(
+                f"\rIntegrating frame {processed}/{total_samples}"
+            )
             sys.stdout.flush()
 
-            rgb_path = os.path.join(rgb_dir, rgb_files[i])
-            depth_path = os.path.join(depth_dir, depth_files[i])
+            rgb_ts, depth_ts, pose_ts = frames[i]
+
+            rgb_path = os.path.join(rgbd_video_dir, rgb_list[rgb_ts][0])
+            depth_path = os.path.join(rgbd_video_dir, depth_list[depth_ts][0])
+
             rgb = cv.imread(rgb_path)
             depth = cv.imread(depth_path, cv.IMREAD_UNCHANGED)
 
             if rgb is None or depth is None:
                 continue
 
-            # Convert to Open3D images
-            color_o3d = o3d.geometry.Image(cv.cvtColor(rgb, cv.COLOR_BGR2RGB))
+            color_o3d = o3d.geometry.Image(
+                cv.cvtColor(rgb, cv.COLOR_BGR2RGB)
+            )
+
             depth_o3d = o3d.geometry.Image(depth)
 
             rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
                 color_o3d,
                 depth_o3d,
-                depth_scale=10000.0,
-                depth_trunc=5.0,
+                depth_scale=5000.0,
+                depth_trunc=8.0,
                 convert_rgb_to_intensity=False
             )
+
+            pose_data = list(map(float, pose_list[pose_ts]))
+
+            tx, ty, tz = pose_data[0:3]
+            qx, qy, qz, qw = pose_data[3:7]
+
+            R = CameraProperties.quaternion_to_rotation_matrix(qx, qy, qz, qw)
+
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3] = [tx, ty, tz]
+
+            # TUM poses are camera -> world, Open3D expects world -> camera
+            extrinsic = np.linalg.inv(T)
 
             volume.integrate(
                 rgbd,
                 intrinsic_o3d,
-                np.linalg.inv(poses[i])
+                extrinsic
             )
 
-        print("\n\nFusion complete.")
+        print("\nExtracting point cloud...")
 
-        # Extract fused point cloud
-        print("Extracting fused point cloud...")
-        fused_cloud = volume.extract_point_cloud()
+        pcd = volume.extract_point_cloud()
 
-        print(f"Fused points: {len(fused_cloud.points)}")
+        print(f"Points generated: {len(pcd.points)}")
 
-        # Extract mesh
-        print("Extracting mesh...")
-        mesh = volume.extract_triangle_mesh()
-        mesh.compute_vertex_normals()
-
-        # Visualization
-        print("Visualizing results...")
-
-        o3d.visualization.draw_geometries(
-            [fused_cloud],
-            window_name="Fused Point Cloud"
-        )
-
-        o3d.visualization.draw_geometries(
-            [mesh],
-            window_name="TSDF Mesh"
-        )
+        o3d.visualization.draw_geometries([pcd])

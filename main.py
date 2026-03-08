@@ -1,11 +1,10 @@
 import os
 import cv2 as cv
-import open3d as o3d
 import time
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
-from src.point_cloud import PointCloudGenerator as pcg, CameraProperties
+from src.point_cloud import PointCloudGenerator as pcg
 
 # Constants
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -14,10 +13,12 @@ LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest
 RTSP_URL = "rtsp://192.168.2.17:8554/stream"
 OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
 
-RGB_IMAGE_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'image', '0000001-000000020431.jpg')
-DEPTH_IMAGE_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'depth', '0000001-000000000000.png')
-INTRINSICS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1', 'intrinsics.txt')
-RGBD_VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'brown_bm_1')
+RGBD_VIDEO_DIR = os.path.join(
+    PROJECT_ROOT,
+    'data',
+    'input_RGBD_videos',
+    'rgbd_dataset_freiburg1_room'
+)
 
 def clear_screen():
     """Clear the terminal screen."""
@@ -106,23 +107,6 @@ def run_object_detection():
     cv.destroyAllWindows()
     print(f"\nProcessing complete! Results saved to: {output_path}")
 
-def generate_from_image():
-    """Generate point cloud from a single RGB-D image pair."""
-    show_menu_header("GENERATE FROM IMAGE")
-
-    # Load images and intrinsics
-    rgb = cv.imread(RGB_IMAGE_PATH)
-    depth = cv.imread(DEPTH_IMAGE_PATH, cv.IMREAD_UNCHANGED)
-    intrinsics = CameraProperties.load_intrinsics(INTRINSICS_PATH)
-    
-    if rgb is None or depth is None:
-        print("Error: Could not load input images")
-        return
-    
-    # Generate point cloud
-    cloud = pcg.create_frame_cloud(rgb, depth, **intrinsics)
-    o3d.visualization.draw_geometries([cloud])
-
 def generate_from_video_menu():
     """Menu for video-based point cloud generation options."""
     while True:
@@ -135,7 +119,7 @@ def generate_from_video_menu():
         choice = input("\nSelect an option (1-3): ").strip()
 
         if choice == '1':
-            VideoHandler.play_from_images(os.path.join(RGBD_VIDEO_DIR, 'image'))
+            VideoHandler.play_from_images(os.path.join(RGBD_VIDEO_DIR, 'rgb'))
         elif choice == '2':
             pcg.generate_from_video(RGBD_VIDEO_DIR)
         elif choice == '3':
@@ -147,18 +131,15 @@ def generate_points_menu():
     """Menu for point cloud generation options."""
     while True:
         show_menu_header("POINT CLOUD GENERATION")
-        print("1. Generate from Image")
-        print("2. Generate from Video")
-        print("3. Back to Main Menu")
+        print("1. Generate from Video")
+        print("2. Back to Main Menu")
         print("="*40)
 
-        choice = input("\nSelect an option (1-3): ").strip()
+        choice = input("\nSelect an option (1-2): ").strip()
 
         if choice == '1':
-            generate_from_image()
-        elif choice == '2':
             generate_from_video_menu()
-        elif choice == '3':
+        elif choice == '2':
             break
         else:
             print("\nInvalid choice. Please try again.")
