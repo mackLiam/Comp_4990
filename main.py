@@ -10,7 +10,7 @@ from src.point_cloud import PointCloudGenerator as pcg
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4')
-RTSP_URL = "rtsp://192.168.2.17:8554/stream"
+RTSP_URL = "rtsp://10.72.87.216:8554/stream"
 OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
 
 RGBD_VIDEO_DIR = os.path.join(
@@ -63,39 +63,64 @@ def run_object_detection():
 
     # Initialize Modules
     try:
+        print(f"\nInitializing detector...")
         detector = Detector()
+        print(f"Connecting to source: {source}...")
         handler = VideoHandler(source, output_path)
+        print(f"Successfully connected to {source} at {handler.width}x{handler.height} @ {handler.fps} FPS")
     except Exception as e:
         print(f"Error during initialization: {e}")
+        time.sleep(2)
         return
 
     # Set up the window
     window_name = 'YOLO Object Detection'
     cv.namedWindow(window_name, cv.WINDOW_NORMAL)
-    print("\nProcessing started... Press 'q' or close window to quit.")
-
     # Main Loop
+    prev_time = time.time()
+    print("\nProcessing started... Press 'q' or close window to quit.")
+    
     while True:
         ret, frame = handler.get_frame()
         if not ret:
-            print("Finished or lost connection to source.")
-            break
+            if handler.is_live:
+                time.sleep(0.01)
+                continue
+            else:
+                print("Finished or lost connection to source.")
+                break
 
-        # Detection -> Drawing
-        results = detector.detect(frame)
-        processed_frame = draw_detections(frame, results)
+        if frame is None:
+            continue
 
-        # Save original resolution
-        handler.write_frame(processed_frame)
+        # Resize for faster processing if frame is very large
+        # We work on a copy/resized version for display and detection
+        # but keep the original for high-quality saving if needed.
+        # However, for 'real-time' feel, let's process at 640px width.
+        PROCESS_WIDTH = 640
+        scale = PROCESS_WIDTH / frame.shape[1]
+        process_frame = cv.resize(frame, (PROCESS_WIDTH, int(frame.shape[0] * scale)))
 
-        # Resize for display if needed
-        display_frame = processed_frame
-        if processed_frame.shape[0] > 720:
-            scale = 720 / processed_frame.shape[0]
-            new_size = (int(processed_frame.shape[1] * scale), 720)
-            display_frame = cv.resize(processed_frame, new_size)
+        # Detection -> Drawing (on the resized 'process_frame')
+        results = detector.detect(process_frame)
+        processed_frame = draw_detections(process_frame, results)
 
-        cv.imshow(window_name, display_frame)
+        # Save the result (we save the smaller processed frame to keep writer fast)
+        # Note: handler.out was initialized with original resolution. 
+        # For simplicity, if we are in live mode, we might want to skip writing 
+        # or resize back. Let's resize back for the output file to keep it consistent.
+        out_frame = cv.resize(processed_frame, (handler.width, handler.height))
+        handler.write_frame(out_frame)
+
+        # Calculate and display FPS
+        curr_time = time.time()
+        fps = 1 / (curr_time - prev_time) if curr_time > prev_time else 0
+        prev_time = curr_time
+        cv.putText(processed_frame, f"FPS: {fps:.1f}", (20, 40), 
+                   cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        # Show the processed frame (already resized to PROCESS_WIDTH)
+        cv.imshow(window_name, processed_frame)
 
         # Check for exit conditions
         key = cv.waitKey(1) & 0xFF

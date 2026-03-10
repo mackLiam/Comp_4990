@@ -2,30 +2,62 @@ import cv2 as cv
 import os
 import sys
 import time
-
-"""
-This module handles video input and output.
-"""
-
+import threading
 
 class VideoHandler:
     def __init__(self, source, output_path):
         """
         Initializes video input and output streams.
         """
-        self.cap = cv.VideoCapture(source)
+        self.source = source
+        self.is_live = isinstance(source, int) or (isinstance(source, str) and source.startswith("rtsp"))
+        
+        # Improved RTSP handling
+        is_rtsp = isinstance(source, str) and source.startswith("rtsp")
+        
+        if is_rtsp:
+            # Force TCP for RTSP streams (more stable)
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            # Use FFMPEG backend explicitly for RTSP
+            self.cap = cv.VideoCapture(source, cv.CAP_FFMPEG)
+            # Set buffer size to 1 to reduce latency and prevent overflow
+            self.cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            self.cap = cv.VideoCapture(source)
 
         if not self.cap.isOpened():
             raise ValueError(f"Could not open video source: {source}")
 
-        # Get video properties
+        # Get video properties (with retries for RTSP)
         self.width = int(self.cap.get(cv.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv.CAP_PROP_FRAME_HEIGHT))
         self.fps = int(self.cap.get(cv.CAP_PROP_FPS))
 
+        # For RTSP, properties might not be available immediately
+        if is_rtsp and (self.width <= 0 or self.height <= 0):
+            print("Connecting to RTSP stream, waiting for properties...")
+            for i in range(20):  # Try for 2 seconds
+                time.sleep(0.1)
+                self.width = int(self.cap.get(cv.CAP_PROP_FRAME_WIDTH))
+                self.height = int(self.cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+                if self.width > 0 and self.height > 0:
+                    break
+            
+            # If still not found, try reading one frame
+            if self.width <= 0 or self.height <= 0:
+                ret, frame = self.cap.read()
+                if ret:
+                    self.height, self.width = frame.shape[:2]
+
+        if self.width <= 0 or self.height <= 0:
+            self.width, self.height = 640, 480  # Default fallback
+            print(f"Warning: Could not determine resolution. Using fallback: {self.width}x{self.height}")
+
         # Fallback for cameras that don't report FPS correctly
         if self.fps <= 0:
             self.fps = 30
+            if is_rtsp:
+                print(f"Warning: Could not determine FPS for RTSP. Using fallback: {self.fps}")
 
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -34,8 +66,30 @@ class VideoHandler:
         fourcc = cv.VideoWriter_fourcc(*'mp4v')
         self.out = cv.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
 
+        # Threaded reading for live sources
+        if self.is_live:
+            self.ret = False
+            self.frame = None
+            self.stopped = False
+            self.thread = threading.Thread(target=self._update, args=())
+            self.thread.daemon = True
+            self.thread.start()
+
+    def _update(self):
+        """Threaded function to constantly read frames."""
+        while not self.stopped:
+            if not self.cap.isOpened():
+                self.stopped = True
+                break
+            self.ret, self.frame = self.cap.read()
+            if not self.ret:
+                # Small sleep to prevent tight loop on connection drop
+                time.sleep(0.01)
+
     def get_frame(self):
-        """Reads the next frame from the source."""
+        """Reads the next frame from the source. For live sources, returns the latest frame."""
+        if self.is_live:
+            return self.ret, self.frame
         return self.cap.read()
 
     def write_frame(self, frame):
@@ -44,6 +98,9 @@ class VideoHandler:
 
     def release(self):
         """Releases all resources and closes windows."""
+        self.stopped = True
+        if hasattr(self, 'thread'):
+            self.thread.join(timeout=1.0)
         self.cap.release()
         self.out.release()
         cv.destroyAllWindows()
