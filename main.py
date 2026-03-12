@@ -1,194 +1,176 @@
 import os
 import cv2 as cv
 import time
+import threading
+import base64
+
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
 from src.point_cloud import PointCloudGenerator as pcg
 
+from nicegui import app, ui
+
+# ---------------------------------------------------------------------------
 # Constants
+# ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4')
 RTSP_URL = "rtsp://10.72.87.216:8554/stream"
 OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
-
 RGBD_VIDEO_DIR = os.path.join(
-    PROJECT_ROOT,
-    'data',
-    'input_RGBD_videos',
-    'rgbd_dataset_freiburg1_room'
+    PROJECT_ROOT, 'data', 'input_RGBD_videos', 'rgbd_dataset_freiburg1_room'
 )
 
-def clear_screen():
-    """Clear the terminal screen."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+SOURCE_MAP = {
+    'Local Video File': LOCAL_VIDEO_PATH,
+    'Laptop Webcam': 0,
+    'Phone Camera (RTSP)': RTSP_URL,
+}
 
-def show_menu_header(title):
-    """Display a standardized menu header."""
-    clear_screen()
-    print("\n" + "="*40)
-    print(f" {title} ")
-    print("="*40)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def frame_to_data_url(frame: cv.typing.MatLike) -> str:
+    """encode an OpenCV frame as a JPEG data URL for UI display."""
+    _, buf = cv.imencode('.jpg', frame, [cv.IMWRITE_JPEG_QUALITY, 75])
+    b64 = base64.b64encode(buf).decode('utf-8')
+    return f'data:image/jpeg;base64,{b64}'
 
-def run_object_detection():
-    """Run the YOLO object detection on video source."""
-    show_menu_header("YOLO VIDEO SOURCE SELECTOR")
 
-    # Configuration
-    local_video = LOCAL_VIDEO_PATH
-    rtsp_url = RTSP_URL
-    output_path = OUTPUT_PATH
+# ---------------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------------
+@ui.page('/')
+def main_page():
+    state = {'running': False}
 
-    print("1. Local Video File (videoTest.mp4)")
-    print("2. Laptop Webcam")
-    print("3. Phone Camera (RTSP)")
-    print("4. Back to Main Menu")
-    print("="*40)
+    ui.label('COMP 4990 — Computer Vision').classes('text-2xl font-bold mb-4')
 
-    choice = input("\nSelect an option (1-4): ").strip()
+    with ui.row().classes('w-full gap-6 items-start'):
+        # left side
+        with ui.column().classes('flex-1 min-w-0'):
+            video_image = ui.interactive_image('').classes('w-full rounded shadow bg-gray-900')
+            status = ui.label('Status: Ready').classes('text-green-600 font-semibold mt-1')
 
-    if choice == '1':
-        source = local_video
-    elif choice == '2':
-        source = 0
-    elif choice == '3':
-        source = rtsp_url
-    elif choice == '4':
-        return
-    else:
-        print("Invalid choice. Returning to main menu...")
-        time.sleep(1)
-        return
+        # right side
+        with ui.column().classes('w-64 gap-2'):
+            source_select = ui.select(
+                list(SOURCE_MAP.keys()),
+                value='Local Video File',
+                label='Video Source',
+            ).classes('w-full')
 
-    # Initialize Modules
-    try:
-        print(f"\nInitializing detector...")
-        detector = Detector()
-        print(f"Connecting to source: {source}...")
-        handler = VideoHandler(source, output_path)
-        print(f"Successfully connected to {source} at {handler.width}x{handler.height} @ {handler.fps} FPS")
-    except Exception as e:
-        print(f"Error during initialization: {e}")
-        time.sleep(2)
-        return
+            def run_detection():
+                if state['running']:
+                    log.push('Detection is already running.')
+                    return
+                source = SOURCE_MAP[source_select.value]
+                status.set_text('Status: Running...')
+                status.classes(remove='text-green-600 text-red-600').classes('text-yellow-600')
+                log.push(f'Starting: {source_select.value}')
 
-    # Set up the window
-    window_name = 'YOLO Object Detection'
-    cv.namedWindow(window_name, cv.WINDOW_NORMAL)
-    # Main Loop
-    prev_time = time.time()
-    print("\nProcessing started... Press 'q' or close window to quit.")
-    
-    while True:
-        ret, frame = handler.get_frame()
-        if not ret:
-            if handler.is_live:
-                time.sleep(0.01)
-                continue
-            else:
-                print("Finished or lost connection to source.")
-                break
+                def detection_loop():
+                    state['running'] = True
+                    try:
+                        detector = Detector()
+                        handler = VideoHandler(source, OUTPUT_PATH)
+                        log.push(
+                            f'Connected: {handler.width}x{handler.height} @ {handler.fps} FPS'
+                        )
+                        while state['running']:
+                            ret, frame = handler.get_frame()
+                            if not ret:
+                                if handler.is_live:
+                                    time.sleep(0.01)
+                                    continue
+                                else:
+                                    log.push('Video finished.')
+                                    break
+                            if frame is None:
+                                continue
 
-        if frame is None:
-            continue
+                            PROCESS_WIDTH = 640
+                            scale = PROCESS_WIDTH / frame.shape[1]
+                            pf = cv.resize(
+                                frame, (PROCESS_WIDTH, int(frame.shape[0] * scale))
+                            )
 
-        # Resize for faster processing if frame is very large
-        # We work on a copy/resized version for display and detection
-        # but keep the original for high-quality saving if needed.
-        # However, for 'real-time' feel, let's process at 640px width.
-        PROCESS_WIDTH = 640
-        scale = PROCESS_WIDTH / frame.shape[1]
-        process_frame = cv.resize(frame, (PROCESS_WIDTH, int(frame.shape[0] * scale)))
+                            results = detector.detect(pf)
+                            pf = draw_detections(pf, results)
 
-        # Detection -> Drawing (on the resized 'process_frame')
-        results = detector.detect(process_frame)
-        processed_frame = draw_detections(process_frame, results)
+                            out_frame = cv.resize(pf, (handler.width, handler.height))
+                            handler.write_frame(out_frame)
 
-        # Save the result (we save the smaller processed frame to keep writer fast)
-        # Note: handler.out was initialized with original resolution. 
-        # For simplicity, if we are in live mode, we might want to skip writing 
-        # or resize back. Let's resize back for the output file to keep it consistent.
-        out_frame = cv.resize(processed_frame, (handler.width, handler.height))
-        handler.write_frame(out_frame)
+                            video_image.set_source(frame_to_data_url(pf))
 
-        # Calculate and display FPS
-        curr_time = time.time()
-        fps = 1 / (curr_time - prev_time) if curr_time > prev_time else 0
-        prev_time = curr_time
-        cv.putText(processed_frame, f"FPS: {fps:.1f}", (20, 40), 
-                   cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        handler.release()
+                        log.push(f'Saved to: {OUTPUT_PATH}')
+                    except Exception as e:
+                        log.push(f'Error: {e}')
+                    finally:
+                        state['running'] = False
+                        status.set_text('Status: Ready')
+                        status.classes(remove='text-yellow-600 text-red-600').classes(
+                            'text-green-600'
+                        )
 
-        # Show the processed frame (already resized to PROCESS_WIDTH)
-        cv.imshow(window_name, processed_frame)
+                threading.Thread(target=detection_loop, daemon=True).start()
 
-        # Check for exit conditions
-        key = cv.waitKey(1) & 0xFF
-        if key == ord('q') or cv.getWindowProperty(window_name, cv.WND_PROP_VISIBLE) < 1:
-            break
+            def stop_detection():
+                if state['running']:
+                    state['running'] = False
+                    log.push('Stopping...')
+                else:
+                    log.push('Nothing is running.')
 
-    # Cleanup
-    handler.release()
-    cv.destroyAllWindows()
-    print(f"\nProcessing complete! Results saved to: {output_path}")
+            def run_point_cloud():
+                log.push('Generating point cloud...')
+                status.set_text('Status: Generating point cloud...')
+                status.classes(remove='text-green-600 text-red-600').classes('text-yellow-600')
+                pc_progress.set_value(0)
 
-def generate_from_video_menu():
-    """Menu for video-based point cloud generation options."""
-    while True:
-        show_menu_header("VIDEO GENERATION OPTIONS")
-        print("1. Watch Video (Normal Playback)")
-        print("2. Generate Point Cloud from Video")
-        print("3. Back to Points Menu")
-        print("="*40)
+                def on_progress(processed, total_samples):
+                    pc_progress.set_visibility(True)
+                    pc_progress_label.set_visibility(True)
+                    pc_progress.set_value(f'{(processed / total_samples) * 100:.1f}%')
+                    pc_progress_label.set_text(f'Frame {processed} / {total_samples}')
 
-        choice = input("\nSelect an option (1-3): ").strip()
+                def generate_point_cloud():
+                    try:
+                        pcg.generate_from_video(RGBD_VIDEO_DIR, on_progress=on_progress)
+                        log.push('Point cloud generation complete!')
+                    except Exception as e:
+                        log.push(f'Error: {e}')
+                    finally:
+                        status.set_text('Status: Ready')
+                        status.classes(remove='text-yellow-600').classes('text-green-600')
 
-        if choice == '1':
-            VideoHandler.play_from_images(os.path.join(RGBD_VIDEO_DIR, 'rgb'))
-        elif choice == '2':
-            pcg.generate_from_video(RGBD_VIDEO_DIR)
-        elif choice == '3':
-            break
-        else:
-            print("\nInvalid choice. Please try again.")
+                threading.Thread(target=generate_point_cloud, daemon=True).start()
 
-def generate_points_menu():
-    """Menu for point cloud generation options."""
-    while True:
-        show_menu_header("POINT CLOUD GENERATION")
-        print("1. Generate from Video")
-        print("2. Back to Main Menu")
-        print("="*40)
+            ui.button('Run Detection', on_click=run_detection).classes(
+                'w-full bg-blue-600 text-white'
+            )
+            ui.button('Stop', on_click=stop_detection).classes(
+                'w-full bg-red-600 text-white'
+            )
+            ui.button('Generate Point Cloud', on_click=run_point_cloud).classes(
+                'w-full bg-green-700 text-white'
+            )
 
-        choice = input("\nSelect an option (1-2): ").strip()
+            pc_progress_label = ui.label('Frame Generation Progress...').classes('text-sm text-gray-500 mt-2')
+            pc_progress_label.set_visibility(False)
+            pc_progress = ui.linear_progress(0).classes('w-full')
+            pc_progress.set_visibility(False)
 
-        if choice == '1':
-            generate_from_video_menu()
-        elif choice == '2':
-            break
-        else:
-            print("\nInvalid choice. Please try again.")
+    log = ui.log(max_lines=30).classes('w-full h-40 mt-4 font-mono text-sm')
 
-def main():
-    """Main CLI entry point that allows selection between different functionalities."""
-    while True:
-        show_menu_header("MAIN MENU")
-        print("1. Run Object Detection")
-        print("2. Generate Points")
-        print("3. Exit")
-        print("="*40)
-        
-        choice = input("\nSelect an option (1-3): ").strip()
-        
-        if choice == '1':
-            run_object_detection()
-        elif choice == '2':
-            generate_points_menu()
-        elif choice == '3':
-            print("\nExiting...")
-            break
-        else:
-            print("\nInvalid choice. Please try again.")
 
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------------------------
+# Launch
+# ---------------------------------------------------------------------------
+app.native.window_args['resizable'] = True
+app.native.settings['ALLOW_DOWNLOADS'] = True
+
+ui.run(native=True, window_size=(1100, 750), title='COMP 4990 — Computer Vision')

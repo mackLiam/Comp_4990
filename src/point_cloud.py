@@ -124,7 +124,7 @@ class PointCloudGenerator:
         return matches
 
     @staticmethod
-    def generate_from_video(rgbd_video_dir):
+    def generate_from_video(rgbd_video_dir, on_progress=None):
         """Generate fused point cloud using TSDF."""
 
         rgb_dir = os.path.join(rgbd_video_dir, "rgb")
@@ -205,6 +205,8 @@ class PointCloudGenerator:
             )
             sys.stdout.flush()
 
+            if on_progress:
+                on_progress(processed, total_samples)
             rgb_ts, depth_ts, pose_ts = frames[i]
 
             rgb_path = os.path.join(rgbd_video_dir, rgb_list[rgb_ts][0])
