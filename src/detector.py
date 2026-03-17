@@ -16,5 +16,5 @@ class Detector:
         :return: Results object from Ultralytics.
         """
         # source=frame uses the array in memory instead of reading from disk
-        results = self.model.predict(source=frame, conf=0.25, save=False, verbose=False)
+        results = self.model.predict(source=frame, conf=0.25, save=False, verbose=False, imgsz=320)
         return results[0]

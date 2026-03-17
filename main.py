@@ -17,7 +17,7 @@ from nicegui import app, ui
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4')
-RTSP_URL = "rtsp://10.72.87.216:8554/stream"
+RTSP_URL = "rtsp://192.168.2.23:8554/stream"
 OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
 RGBD_VIDEO_DIR = os.path.join(
     PROJECT_ROOT, 'data', 'input_RGBD_videos', 'rgbd_dataset_freiburg1_room'
@@ -73,12 +73,31 @@ def main_page():
 
                 def detection_loop():
                     state['running'] = True
+                    def safe_log(msg: str) -> None:
+                        try:
+                            log.push(msg)
+                        except Exception:
+                            print(f'[log fallback] {msg}')
+
                     try:
                         detector = Detector()
                         handler = VideoHandler(source, OUTPUT_PATH)
-                        log.push(
+                        safe_log(
                             f'Connected: {handler.width}x{handler.height} @ {handler.fps} FPS'
                         )
+
+                        # --- Optimisation constants ---
+                        # Run YOLO only once every N frames; reuse cached result in between.
+                        DETECT_EVERY_N = 3
+                        # Cap UI repaints at this many frames per second to avoid
+                        # saturating the main thread with JPEG-encode + base64 work.
+                        UI_MAX_FPS = 20
+                        ui_interval = 1.0 / UI_MAX_FPS
+
+                        frame_count = 0
+                        last_results = None
+                        last_ui_update = 0.0
+
                         while state['running']:
                             ret, frame = handler.get_frame()
                             if not ret:
@@ -86,7 +105,7 @@ def main_page():
                                     time.sleep(0.01)
                                     continue
                                 else:
-                                    log.push('Video finished.')
+                                    safe_log('Video finished.')
                                     break
                             if frame is None:
                                 continue
@@ -97,24 +116,40 @@ def main_page():
                                 frame, (PROCESS_WIDTH, int(frame.shape[0] * scale))
                             )
 
-                            results = detector.detect(pf)
-                            pf = draw_detections(pf, results)
+                            # Only run YOLO on every Nth frame; reuse last bbox on skipped frames
+                            frame_count += 1
+                            if last_results is None or frame_count % DETECT_EVERY_N == 0:
+                                last_results = detector.detect(pf)
+
+                            pf = draw_detections(pf, last_results)
 
                             out_frame = cv.resize(pf, (handler.width, handler.height))
                             handler.write_frame(out_frame)
 
-                            video_image.set_source(frame_to_data_url(pf))
+                            # Throttle UI updates — only push a new image when enough
+                            # time has elapsed since the last repaint.
+                            now = time.monotonic()
+                            if now - last_ui_update >= ui_interval:
+                                try:
+                                    video_image.set_source(frame_to_data_url(pf))
+                                except Exception:
+                                    pass
+                                last_ui_update = now
 
                         handler.release()
-                        log.push(f'Saved to: {OUTPUT_PATH}')
+                        safe_log(f'Saved to: {OUTPUT_PATH}')
                     except Exception as e:
-                        log.push(f'Error: {e}')
+                        safe_log(f'Error: {e}')
                     finally:
+                        # Always reset running state — even if log/status UI calls fail.
                         state['running'] = False
-                        status.set_text('Status: Ready')
-                        status.classes(remove='text-yellow-600 text-red-600').classes(
-                            'text-green-600'
-                        )
+                        try:
+                            status.set_text('Status: Ready')
+                            status.classes(remove='text-yellow-600 text-red-600').classes(
+                                'text-green-600'
+                            )
+                        except Exception:
+                            pass
 
                 threading.Thread(target=detection_loop, daemon=True).start()
 
