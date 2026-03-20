@@ -7,7 +7,7 @@ import base64
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
-from src.point_cloud import MeshGenerator as mg
+from src.point_cloud import PointCloudGenerator as pcg
 
 from nicegui import app, ui
 
@@ -139,7 +139,7 @@ def main_page():
 
                 def generate_point_cloud():
                     try:
-                        mg.generate_from_video(RGBD_VIDEO_DIR, on_progress=on_progress)
+                        pcg.generate_from_video(RGBD_VIDEO_DIR, on_progress=on_progress)
                         log.push('Point cloud generation complete!')
                     except Exception as e:
                         log.push(f'Error: {e}')
