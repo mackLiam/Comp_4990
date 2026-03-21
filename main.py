@@ -3,6 +3,7 @@ import cv2 as cv
 import time
 import threading
 import base64
+import json
 
 from src.detector import Detector
 from src.video_handler import VideoHandler
@@ -16,18 +17,19 @@ from nicegui import app, ui
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-LOCAL_VIDEO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4')
-RTSP_URL = "rtsp://192.168.2.23:8554/stream"
-OUTPUT_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4')
-RGBD_VIDEO_DIR = os.path.join(
-    PROJECT_ROOT, 'data', 'input_RGBD_videos', 'rgbd_dataset_freiburg1_room'
-)
+SETTINGS_PATH = os.path.join(PROJECT_ROOT, 'settings.json')
 
-SOURCE_MAP = {
-    'Local Video File': LOCAL_VIDEO_PATH,
-    'Laptop Webcam': 0,
-    'Phone Camera (RTSP)': RTSP_URL,
+SETTINGS_DEFAULT = {
+    'local_video_path': os.path.join(PROJECT_ROOT, 'data', 'input_videos', 'videoTest.mp4'),
+    'rtsp_url': "rtsp://192.168.2.23:8554/stream",
+    'output_path': os.path.join(PROJECT_ROOT, 'data', 'output_videos', 'output.mp4'),
+    'rgbd_video_dir': os.path.join(PROJECT_ROOT, 'data', 'input_RGBD_videos', 'rgbd_dataset_freiburg1_room'),
+    's_tolerence': 0.5,
 }
+SETTINGS_PATH = os.path.join(PROJECT_ROOT, 'settings.json')
+
+SETTINGS = SETTINGS_DEFAULT.copy()
+    
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,6 +40,33 @@ def frame_to_data_url(frame: cv.typing.MatLike) -> str:
     b64 = base64.b64encode(buf).decode('utf-8')
     return f'data:image/jpeg;base64,{b64}'
 
+def load_settings() -> None:
+    """Load settings from JSON file, or create it with defaults if not found."""
+    if os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, 'r') as f:
+                loaded = json.load(f)
+                SETTINGS.update(loaded)
+                print(f'Settings loaded from {SETTINGS_PATH}')
+                return
+        except Exception as e:
+            print(f'Error loading settings: {e}')
+    else:
+        save_settings() 
+        print(f'Settings file created with default settings at {SETTINGS_PATH}')
+
+def save_settings() -> None:
+    """Save current settings to JSON file."""
+    with open(SETTINGS_PATH, 'w') as f:
+        json.dump(SETTINGS, f, indent=4)
+
+load_settings()
+
+SOURCE_MAP = {
+    'Local Video File': SETTINGS['local_video_path'],
+    'Laptop Webcam': 0,
+    'Phone Camera (RTSP)': SETTINGS['rtsp_url'],
+}
 
 # ---------------------------------------------------------------------------
 # UI helpers
@@ -254,7 +283,7 @@ def build_sidebar(active: str) -> None:
 # ---------------------------------------------------------------------------
 @ui.page('/')
 def main_page():
-    state = {'running': False, 'source': 'Local Video File', 'tolerance': 0.5}
+    state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence']}
 
     ui.add_head_html(CSS)
 
@@ -291,7 +320,7 @@ def main_page():
 
             try:
                 detector = Detector()
-                handler = VideoHandler(source, OUTPUT_PATH)
+                handler = VideoHandler(source, SETTINGS['output_path'])
                 safe_log(f'Connected: {handler.width}x{handler.height} @ {handler.fps} FPS')
 
                 DETECT_EVERY_N = 3
@@ -334,7 +363,7 @@ def main_page():
                         last_ui_update = now
 
                 handler.release()
-                safe_log(f'Saved to: {OUTPUT_PATH}')
+                safe_log(f'Saved to: {SETTINGS["output_path"]}')
             except Exception as e:
                 safe_log(f'Error: {e}')
             finally:
@@ -442,7 +471,7 @@ def reconstruction_page():
 
         def generate_point_cloud():
             try:
-                pcg.generate_from_video(RGBD_VIDEO_DIR, on_progress=on_progress)
+                pcg.generate_from_video(SETTINGS['rgbd_video_dir'], on_progress=on_progress)
                 log.push('Point cloud generation complete!')
             except Exception as e:
                 log.push(f'Error: {e}')
@@ -455,7 +484,7 @@ def reconstruction_page():
         threading.Thread(target=generate_point_cloud, daemon=True).start()
 
     def preview_point_cloud():
-        rgb_dir = os.path.join(RGBD_VIDEO_DIR, 'rgb')
+        rgb_dir = os.path.join(SETTINGS['rgbd_video_dir'], 'rgb')
         if not os.path.exists(rgb_dir):
             log.push('RGB source directory not found.')
             return
@@ -553,8 +582,7 @@ def reconstruction_page():
 # ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
-app.native.window_args['resizable'] = False
-app.native.settings['ALLOW_DOWNLOADS'] = True
-
-
-ui.run(native=True, window_size=(1175, 575), title='COMP 4990 — Computer Vision')
+if __name__ in {"__main__", "__mp_main__"}:
+    app.native.window_args['resizable'] = False
+    app.native.settings['ALLOW_DOWNLOADS'] = True
+    ui.run(native=True, window_size=(1185, 585), title='COMP 4990 — Computer Vision')
