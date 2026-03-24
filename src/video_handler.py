@@ -16,8 +16,9 @@ class VideoHandler:
         is_rtsp = isinstance(source, str) and source.startswith("rtsp")
         
         if is_rtsp:
-            # Force TCP for RTSP streams (more stable)
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            # Force TCP for RTSP streams (more stable).
+            # stimeout sets the socket-level timeout in microseconds (5 000 000 µs = 5 s).
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|fflags;nobuffer"
             # Use FFMPEG backend explicitly for RTSP
             self.cap = cv.VideoCapture(source, cv.CAP_FFMPEG)
             # Set buffer size to 1 to reduce latency and prevent overflow

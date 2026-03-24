@@ -16,13 +16,13 @@ def draw_detections(frame, detections):
     for i in range(len(boxes)):
         x1, y1, x2, y2 = map(int, boxes[i])
         
-        # Draw green bounding box
-        cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        MINT = (179, 253, 105)  # #69fdb3 in BGR
+        cv.rectangle(frame, (x1, y1), (x2, y2), MINT, 2)
         
         # Draw label background and text
         label = f"{names[classes[i]]} {confs[i]:.2f}"
         (w, h), _ = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), (0, 255, 0), -1)
+        cv.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), MINT, -1)
         cv.putText(frame, label, (x1, y1 - 5), 
                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         
