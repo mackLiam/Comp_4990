@@ -8,8 +8,8 @@ import json
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
-from src.point_cloud import PointCloudGenerator as pcg
-from src.point_cloud import LiveGenerator as lvg
+from src.tum_generator import TUMGenerator as tum
+from src.live_generator import LiveGenerator
 
 from nicegui import app, ui
 
@@ -143,11 +143,11 @@ CSS = '''<style>
     gap: 10px;
     margin-left: 10px;
     margin-top: 10px;
-    width: 920px;
+    width: 1140px;
   }
   .video-box {
-    width: 600px;
-    height: 350px;
+    width: 800px;
+    height: 450px;
     background-color: #242527;
     border-radius: 20px;
     flex-shrink: 0;
@@ -173,12 +173,12 @@ CSS = '''<style>
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    height: 350px;
-    width: 300px;
+    height: 450px;
+    width: 320px;
   }
   .run-stop { display: flex; flex-direction: column; gap: 10px; }
   .btn-run, .btn-stop {
-    min-width: 300px;
+    min-width: 320px;
     height: 70px;
     border-radius: 20px;
     font-size: 16px;
@@ -225,7 +225,7 @@ CSS = '''<style>
   .source-btn:hover { background-color: #ffffff; color: #242527; }
 
   /* Bottom cards */
-  .bottom-section { display: flex; gap: 10px; margin: 10px; max-width: 910px; }
+  .bottom-section { display: flex; gap: 10px; margin: 10px; max-width: 1130px; }
   .card {
     border-radius: 15px;
     padding: 12px;
@@ -472,7 +472,7 @@ def reconstruction_page():
 
         def generate_point_cloud():
             try:
-                pcg.generate_from_video(SETTINGS['rgbd_video_dir'], on_progress=on_progress)
+                tum.generate_from_tum(SETTINGS['rgbd_video_dir'], on_progress=on_progress)
                 log.push('Point cloud generation complete!')
             except Exception as e:
                 log.push(f'Error: {e}')
@@ -586,4 +586,4 @@ def reconstruction_page():
 if __name__ in {"__main__", "__mp_main__"}:
     app.native.window_args['resizable'] = False
     app.native.settings['ALLOW_DOWNLOADS'] = True
-    ui.run(native=True, window_size=(1185, 585), title='COMP 4990 — Computer Vision')
+    ui.run(native=True, window_size=(1400, 800), title='COMP 4990 — Computer Vision')
