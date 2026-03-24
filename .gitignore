@@ -208,3 +208,4 @@ __marimo__/
 /.idea
 /data/output_videos
 src/yolov8n.pt
+/data/output_3D_Models
