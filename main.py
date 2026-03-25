@@ -8,7 +8,8 @@ import json
 from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
-from src.point_cloud import PointCloudGenerator as pcg
+from src.tum_generator import TUMGenerator as tum
+from src.live_generator import LiveGenerator
 import webview
 
 from nicegui import app, ui
@@ -31,6 +32,9 @@ SETTINGS_PATH = os.path.join(PROJECT_ROOT, 'settings.json')
 
 SETTINGS = SETTINGS_DEFAULT.copy()
 
+OUTPUT_3D_MODELS_PATH = os.path.join(PROJECT_ROOT, 'data', 'output_3D_models')
+
+
 _shutting_down = False
 
 
@@ -42,6 +46,7 @@ def frame_to_data_url(frame: cv.typing.MatLike) -> str:
     _, buf = cv.imencode('.jpg', frame, [cv.IMWRITE_JPEG_QUALITY, 75])
     b64 = base64.b64encode(buf).decode('utf-8')
     return f'data:image/jpeg;base64,{b64}'
+
 
 def load_settings() -> None:
     """Load settings from JSON file, or create it with defaults if not found."""
@@ -55,8 +60,9 @@ def load_settings() -> None:
         except Exception as e:
             print(f'Error loading settings: {e}')
     else:
-        save_settings() 
+        save_settings()
         print(f'Settings file created with default settings at {SETTINGS_PATH}')
+
 
 def save_settings() -> None:
     """Save current settings to JSON file."""
@@ -155,11 +161,11 @@ CSS = '''<style>
     gap: 10px;
     margin-left: 10px;
     margin-top: 10px;
-    width: 920px;
+    width: 1140px;
   }
   .video-box {
-    width: 600px;
-    height: 350px;
+    width: 800px;
+    height: 450px;
     background-color: #242527;
     border-radius: 20px;
     flex-shrink: 0;
@@ -185,12 +191,12 @@ CSS = '''<style>
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    height: 350px;
-    width: 300px;
+    height: 450px;
+    width: 320px;
   }
   .run-stop { display: flex; flex-direction: column; gap: 10px; }
   .btn-run, .btn-stop {
-    min-width: 300px;
+    min-width: 320px;
     height: 70px;
     border-radius: 20px;
     font-size: 16px;
@@ -237,7 +243,7 @@ CSS = '''<style>
   .source-btn:hover { background-color: #ffffff; color: #242527; }
 
   /* Bottom cards */
-  .bottom-section { display: flex; gap: 10px; margin: 10px; max-width: 910px; }
+  .bottom-section { display: flex; gap: 10px; margin: 10px; max-width: 1130px; }
   .card {
     border-radius: 15px;
     padding: 12px;
@@ -619,7 +625,6 @@ def main_page():
                             source_btns[src_name] = btn_el
                         update_source_buttons(state['source'])
 
-            # Bottom row: status + progress + log
             with ui.element('div').classes('bottom-section'):
                 with ui.element('div').classes('card status-card'):
                     ui.label('Status').classes('confidence-subtitle')
@@ -648,15 +653,90 @@ def main_page():
 # ---------------------------------------------------------------------------
 @ui.page('/reconstruction')
 def reconstruction_page():
-    state = {'running': False, 'previewing': False}
+    state = {'running': False, 'previewing': False, 'source': 'TUM Dataset', 'live_scanning': False}
+    live_gen = LiveGenerator(output_path=OUTPUT_3D_MODELS_PATH)
 
     ui.add_head_html(CSS)
 
+    # ── Source & UI Handlers ──────────────────────────────────────────────────
+    def update_source_ui(selected: str) -> None:
+        for name, btn in source_btns.items():
+            if name == selected:
+                btn.classes(add='active-src')
+            else:
+                btn.classes(remove='active-src')
+
+        is_tum = selected == 'TUM Dataset'
+        btn_run_tum.set_visibility(is_tum)
+        btn_toggle_preview.set_visibility(is_tum)
+        btn_start_live.set_visibility(not is_tum)
+
+    def select_source(name: str) -> None:
+        if state['running'] or state['live_scanning'] or state['previewing']:
+            log.push("Stop active processes before changing source.")
+            return
+        state['source'] = name
+        update_source_ui(name)
+
+    # ── Live Generation Polling Loop ──────────────────────────────────────────
+    def update_reconstruction_ui():
+        """Polling function to securely update the UI from the main thread."""
+
+        # 1. Update the live scanning progress
+        if state['live_scanning']:
+            pc_progress.set_visibility(True)
+            pc_progress_label.set_visibility(True)
+            pos = live_gen.current_pos
+            pc_progress_label.set_text(
+                f"Frames: {live_gen.count} | Pos: [{pos[0]:+.2f}, {pos[1]:+.2f}, {pos[2]:+.2f}]"
+            )
+            pc_progress.set_value((live_gen.count % 100) / 100)
+
+            # Show live preview frame if available
+            if hasattr(live_gen, 'latest_frame') and live_gen.latest_frame is not None:
+                try:
+                    video_image.set_source(frame_to_data_url(live_gen.latest_frame))
+                except Exception:
+                    pass
+
+        # 2. Check if the background extraction has finished
+        if hasattr(live_gen, 'finished_msg') and live_gen.finished_msg is not None:
+            success, msg = live_gen.finished_msg
+            log.push(msg)
+
+            # Reset UI state
+            status.set_text('Ready')
+            status.style('color: #69fdb3')
+            pc_progress.set_visibility(False)
+            state['live_scanning'] = False
+
+            # Clear the message to avoid duplicate processing
+            live_gen.finished_msg = None
+
+            # Register the main-thread timer (runs 10 times a second)
+
+    ui.timer(0.1, update_reconstruction_ui)
+
+    def start_live_scan():
+        if state['live_scanning']: return
+        success, msg = live_gen.start_scan()
+        if success:
+            state['live_scanning'] = True
+            log.push('Live scan started. Stop from the iPhone app when done.')
+            status.set_text('Scanning...')
+            status.style('color: #facc15')
+            pc_progress.set_visibility(True)
+            pc_progress_label.set_visibility(True)
+        else:
+            log.push(f'Failed to connect: {msg}')
+
+    # ── TUM Dataset Actions ───────────────────────────────────────────────────
     def run_point_cloud():
         if state['running']:
             log.push('Already running.')
             return
-        state['previewing'] = False  # stop any active preview
+        state['previewing'] = False
+        reset_preview_button()
         log.push('Generating point cloud...')
         status.set_text('Running...')
         status.style('color: #facc15')
@@ -671,74 +751,87 @@ def reconstruction_page():
 
         def generate_point_cloud():
             try:
-                pcg.generate_from_video(SETTINGS['rgbd_video_dir'], on_progress=on_progress)
+                tum.generate_from_tum(SETTINGS['rgbd_video_dir'], output_path=OUTPUT_3D_MODELS_PATH,
+                                      on_progress=on_progress)
                 log.push('Point cloud generation complete!')
             except Exception as e:
                 log.push(f'Error: {e}')
             finally:
                 state['running'] = False
-                status.set_text('Ready')
-                status.style('color: #69fdb3')
+
+                def ui_reset():
+                    status.set_text('Ready')
+                    status.style('color: #69fdb3')
+
+                ui.timer(0.1, ui_reset, once=True)
 
         state['running'] = True
         threading.Thread(target=generate_point_cloud, daemon=True).start()
 
-    def preview_point_cloud():
-        rgb_dir = os.path.join(SETTINGS['rgbd_video_dir'], 'rgb')
-        if not os.path.exists(rgb_dir):
-            log.push('RGB source directory not found.')
-            return
-        if state['previewing']:
-            log.push('Preview already playing.')
-            return
+    def reset_preview_button():
+        preview_label.set_text('Preview Video')
+        preview_icon.set_source('./ui_IMG/play.svg')
 
-        allowed_ext = ('.jpg', '.jpeg', '.png')
-        image_files = sorted(
-            [f for f in os.listdir(rgb_dir) if f.lower().endswith(allowed_ext)],
-            key=lambda n: float(os.path.splitext(n)[0]) if os.path.splitext(n)[0].replace('.', '', 1).isdigit() else n
-        )
-        if not image_files:
-            log.push('No frames found in rgb/ directory.')
-            return
-
-        log.push(f'Playing {len(image_files)} frames in app...')
-        state['previewing'] = True
-
-        def playback_loop():
-            UI_MAX_FPS = 30
-            interval = 1.0 / UI_MAX_FPS
-            for img_file in image_files:
-                if not state['previewing'] or _shutting_down:
-                    break
-                frame = cv.imread(os.path.join(rgb_dir, img_file))
-                if frame is None:
-                    continue
-                try:
-                    video_image.set_source(frame_to_data_url(frame))
-                except Exception:
-                    break
-                time.sleep(interval)
-            state['previewing'] = False
-            try:
-                log.push('Preview finished.')
-            except Exception:
-                pass
-
-        threading.Thread(target=playback_loop, daemon=True).start()
-
-    def stop_preview():
+    def toggle_preview():
         if state['previewing']:
             state['previewing'] = False
             log.push('Preview stopped.')
+            reset_preview_button()
         else:
-            log.push('Nothing is playing.')
+            rgb_dir = os.path.join(SETTINGS['rgbd_video_dir'], 'rgb')
+            if not os.path.exists(rgb_dir):
+                log.push('RGB source directory not found.')
+                return
 
+            allowed_ext = ('.jpg', '.jpeg', '.png')
+            image_files = sorted(
+                [f for f in os.listdir(rgb_dir) if f.lower().endswith(allowed_ext)],
+                key=lambda n: float(os.path.splitext(n)[0]) if os.path.splitext(n)[0].replace('.', '',
+                                                                                              1).isdigit() else n
+            )
+            if not image_files:
+                log.push('No frames found in rgb/ directory.')
+                return
+
+            log.push(f'Playing {len(image_files)} frames in app...')
+            state['previewing'] = True
+            preview_label.set_text('Stop Preview')
+            preview_icon.set_source('./ui_IMG/stop.svg')
+
+            def playback_loop():
+                UI_MAX_FPS = 30
+                interval = 1.0 / UI_MAX_FPS
+                for img_file in image_files:
+                    if not state['previewing'] or _shutting_down:
+                        break
+                    frame = cv.imread(os.path.join(rgb_dir, img_file))
+                    if frame is None:
+                        continue
+                    try:
+                        video_image.set_source(frame_to_data_url(frame))
+                    except Exception:
+                        break
+                    time.sleep(interval)
+
+                state['previewing'] = False
+
+                def finish_ui():
+                    reset_preview_button()
+                    try:
+                        log.push('Preview finished.')
+                    except Exception:
+                        pass
+
+                ui.timer(0.1, finish_ui, once=True)
+
+            threading.Thread(target=playback_loop, daemon=True).start()
+
+    # ── Layout ────────────────────────────────────────────────────────────────
     with ui.element('div').classes('app-container'):
 
         build_sidebar('reconstruction')
 
         with ui.element('div').classes('main-panel'):
-
             with ui.element('div').classes('top-part'):
                 with ui.element('div').classes('video-box'):
                     ui.label('3D Reconstruction').classes('video-label')
@@ -748,15 +841,33 @@ def reconstruction_page():
 
                 with ui.element('div').classes('control-panel'):
                     with ui.element('div').classes('run-stop'):
-                        with ui.element('button').classes('btn-run').on('click', run_point_cloud):
+                        btn_run_tum = ui.element('button').classes('btn-run').on('click', run_point_cloud)
+                        with btn_run_tum:
                             ui.label('Generate')
                             ui.image('./ui_IMG/cube.svg').style('width: 15px;')
-                        with ui.element('button').classes('btn-stop').on('click', preview_point_cloud):
-                            ui.label('Preview Video')
-                            ui.image('./ui_IMG/play.svg').style('width: 15px;')
-                        with ui.element('button').classes('btn-stop').on('click', stop_preview):
-                            ui.label('Stop Preview')
-                            ui.image('./ui_IMG/stop.svg').style('width: 15px;')
+
+                        btn_toggle_preview = ui.element('button').classes('btn-stop').on('click', toggle_preview)
+                        with btn_toggle_preview:
+                            preview_label = ui.label('Preview Video')
+                            preview_icon = ui.image('./ui_IMG/play.svg').style('width: 15px;')
+
+                        btn_start_live = ui.element('button').classes('btn-run').on('click', start_live_scan)
+                        with btn_start_live:
+                            ui.label('Start Live Scan')
+                            ui.image('./ui_IMG/cube.svg').style('width: 15px;')
+
+                    with ui.element('div').classes('source-section'):
+                        ui.label('Data Source:').classes('source-title')
+                        source_btns: dict = {}
+                        for src_name in ['TUM Dataset', 'Live Stream']:
+                            btn_el = ui.element('button').classes('source-btn').on(
+                                'click', lambda n=src_name: select_source(n)
+                            )
+                            with btn_el:
+                                ui.label(src_name)
+                            source_btns[src_name] = btn_el
+
+                        update_source_ui(state['source'])
 
             with ui.element('div').classes('bottom-section'):
                 with ui.element('div').classes('card status-card'):
@@ -886,4 +997,4 @@ if __name__ in {"__main__", "__mp_main__"}:
 
     app.native.window_args['resizable'] = False
     app.native.settings['ALLOW_DOWNLOADS'] = True
-    ui.run(native=True, window_size=(1185, 585), title='COMP 4990 — Computer Vision')
+    ui.run(native=True, window_size=(1400, 800), title='COMP 4990 — Computer Vision')
