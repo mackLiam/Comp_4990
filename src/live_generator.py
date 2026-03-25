@@ -1,13 +1,16 @@
+import os
 import numpy as np
 import open3d as o3d
 import cv2 as cv
 import record3d as r3d
+import threading
 from src.helper import Helper
+
 
 class LiveGenerator:
     """Generator for creating 3D meshes from live Record3D iPhone streams."""
 
-    def __init__(self):
+    def __init__(self, output_path=None):
         self.session = None
         self.volume = None
         self.intrinsic = None
@@ -15,7 +18,9 @@ class LiveGenerator:
         self.count = 0
         self.is_scanning = False
         self.current_pos = [0.0, 0.0, 0.0]
-        self.on_frame_callback = None
+        self.output_path = output_path
+        self.latest_frame = None
+        self.finished_msg = None
 
     def start_scan(self):
         """Initialize and start the live scan session."""
@@ -27,8 +32,10 @@ class LiveGenerator:
         self.count = 0
         self.last_c2w = None
         self.intrinsic = None
+        self.latest_frame = None
+        self.finished_msg = None
         self.volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.004, sdf_trunc=0.04,
+            voxel_length=0.002, sdf_trunc=0.01,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
         )
 
@@ -42,13 +49,20 @@ class LiveGenerator:
         return True, "Connected successfully"
 
     def stop_scan(self):
-        """Stop the scanning session."""
+        """Forcefully stop the scanning session (failsafe)."""
         if self.session:
             self.session.disconnect()
 
     def on_stream_stopped(self):
-        """Called when the stream stops."""
+        """Called automatically when the stream stops from the iPhone app."""
         self.is_scanning = False
+
+        # Extract mesh in a background thread to prevent blocking the Record3D callback thread
+        def background_extract():
+            success, msg = self.extract_mesh("live_mesh.ply", output_path=self.output_path)
+            self.finished_msg = (success, msg)
+
+        threading.Thread(target=background_extract, daemon=True).start()
 
     def on_new_frame(self):
         """Process each new frame from the Record3D stream."""
@@ -80,9 +94,11 @@ class LiveGenerator:
             # Check if movement is sufficient
             if self.last_c2w is not None:
                 dist = np.linalg.norm(c2w_final[:3, 3] - self.last_c2w[:3, 3])
-                rel_R = np.dot(c2w_final[:3, :3], self.last_c2w[:3, :3].T)
+                # Check angular change
+                R_curr, R_last = c2w_final[:3, :3], self.last_c2w[:3, :3]
+                rel_R = np.dot(R_curr, R_last.T)
                 angle = np.degrees(np.arccos(np.clip((np.trace(rel_R) - 1) / 2, -1.0, 1.0)))
-                if dist <= 0.01 and angle <= 1.0:
+                if dist < 0.03 or angle < 5.0:
                     return
 
             d_h, d_w = depth.shape
@@ -101,21 +117,19 @@ class LiveGenerator:
             rgb_o3d = o3d.geometry.Image(rgb_fixed)
             depth_o3d = o3d.geometry.Image(depth_clean)
             rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                rgb_o3d, depth_o3d, depth_scale=1.0, depth_trunc=1.5, convert_rgb_to_intensity=False
+                rgb_o3d, depth_o3d, depth_scale=1.0, depth_trunc=0.5, convert_rgb_to_intensity=False
             )
 
             self.volume.integrate(rgbd, self.intrinsic, np.linalg.inv(c2w_final))
             self.last_c2w = c2w_final
             self.count += 1
-
-            # Notify callback if set
-            if self.on_frame_callback:
-                self.on_frame_callback()
+            rgb_bgr = cv.cvtColor(rgb_fixed, cv.COLOR_RGB2BGR)
+            self.latest_frame = rgb_bgr
 
         except Exception as e:
             print(f"Error in on_new_frame: {e}")
 
-    def extract_mesh(self, output_file="live_mesh.ply", visualize=False):
+    def extract_mesh(self, output_file="live_mesh.ply", output_path=None):
         """Extract and save the mesh from the TSDF volume."""
         if self.count == 0:
             return False, "No frames captured"
@@ -128,11 +142,15 @@ class LiveGenerator:
             mesh.remove_duplicated_vertices()
             mesh.remove_unreferenced_vertices()
 
+            # Use output_path if provided, otherwise use current directory
+            if output_path:
+                os.makedirs(output_path, exist_ok=True)
+                output_file = os.path.join(output_path, output_file)
+
             o3d.io.write_triangle_mesh(output_file, mesh)
             print(f"Saved optimized mesh to {output_file}")
 
-            if visualize:
-                o3d.visualization.draw_geometries([mesh])
+            o3d.visualization.draw_geometries([mesh])
 
             return True, output_file
         except Exception as e:

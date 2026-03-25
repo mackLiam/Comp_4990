@@ -146,7 +146,7 @@ class TUMGenerator:
         return poses
 
     @staticmethod
-    def generate_from_tum(rgbd_video_dir, output_file="tum_mesh.ply", on_progress=None):
+    def generate_from_tum(rgbd_video_dir, output_path=None, output_file="tum_mesh.ply", on_progress=None):
         """Generate fused point cloud using offline TUM dataset."""
         rgb_dir = os.path.join(rgbd_video_dir, "rgb")
         depth_dir = os.path.join(rgbd_video_dir, "depth")
@@ -155,6 +155,11 @@ class TUMGenerator:
         if not os.path.isdir(rgb_dir) or not os.path.isdir(depth_dir):
             print("Missing rgb/ or depth/ directories.")
             return
+
+        # Use output_path if provided, otherwise use current directory
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            output_file = os.path.join(output_path, output_file)
 
         print("Loading poses...")
         poses = TUMGenerator.load_tum_groundtruth(groundtruth_file)
