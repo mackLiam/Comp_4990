@@ -9,6 +9,7 @@ from src.detector import Detector
 from src.video_handler import VideoHandler
 from src.utils import draw_detections
 from src.point_cloud import PointCloudGenerator as pcg
+import webview
 
 from nicegui import app, ui
 
@@ -29,7 +30,9 @@ SETTINGS_DEFAULT = {
 SETTINGS_PATH = os.path.join(PROJECT_ROOT, 'settings.json')
 
 SETTINGS = SETTINGS_DEFAULT.copy()
-    
+
+_shutting_down = False
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,6 +71,7 @@ SOURCE_MAP = {
     'Phone Camera (RTSP)': SETTINGS['rtsp_url'],
 }
 
+
 # ---------------------------------------------------------------------------
 # UI helpers
 # ---------------------------------------------------------------------------
@@ -75,6 +79,14 @@ CSS = '''<style>
   * { box-sizing: border-box; }
   body, .q-page, .nicegui-content { padding: 0 !important; margin: 0 !important; }
   .q-page { background-color: #242527 !important; }
+
+  /* Scrollbar */
+  * { scrollbar-width: thin; scrollbar-color: #242527 transparent; }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background-color: #242527; border-radius: 3px; border: none; }
+  *::-webkit-scrollbar-corner { background: transparent; }
+  *::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
 
   .app-container {
     display: flex;
@@ -103,6 +115,7 @@ CSS = '''<style>
     display: flex;
     flex-direction: column;
     gap: 15px;
+    flex: 1;
   }
   .nav-pill {
     border-radius: 20px;
@@ -256,6 +269,180 @@ CSS = '''<style>
   .tolerance-input .q-field__native { color: #242527 !important; font-size: 14px; padding: 2px 8px; }
   .tolerance-input .q-field__bottom { display: none; }
   .tolerance-input { width: 100%; }
+
+  /* Settings page */
+  .settings-main {
+    background-color: #dedede;
+    border-radius: 20px;
+    margin: 5px 0;
+    flex: 1;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    max-width: 930px;
+    width: 930px;
+  }
+  .settings-title {
+    font-size: 2rem;
+    font-weight: 800;
+    color: black;
+    margin: 24px 0 0 24px;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .settings-subtitle {
+    font-size: 0.8rem;
+    color: rgba(0,0,0,0.5);
+    margin-bottom: 24px;
+    margin-left: 24px;
+  }
+  .settings-card {
+    background-color: white;
+    width: calc(100% - 48px);
+    border-radius: 12px;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px 32px;
+    margin-bottom: 16px;
+    margin: 0 24px 16px 24px;
+  }
+  .settings-field { display: flex; flex-direction: column; gap: 6px; }
+  .settings-field-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.5);
+  }
+  .settings-field-row { display: flex; gap: 8px; align-items: center; }
+  .settings-input-wrap { flex: 1; }
+  .settings-input-wrap .q-field__control {
+    background: #2a2d33 !important;
+    border-radius: 6px !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+  }
+  .settings-input-wrap .q-field__native { color: white !important; font-size: 13px; padding-left: 8px !important; }
+  .settings-input-wrap .q-field__bottom { display: none; }
+  .settings-input-wrap .q-field__before, .settings-input-wrap .q-field__after { display: none; }
+
+  .rtsp-input-wrap { flex: 1; }
+  .rtsp-input-wrap .q-field__control {
+    background: #f5f5f3 !important;
+    border-radius: 6px !important;
+    border: 1px solid rgba(0,0,0,0.1) !important;
+  }
+  .rtsp-input-wrap .q-field__native { color: #111 !important; font-size: 13px; padding-left: 8px !important; }
+  .rtsp-input-wrap .q-field__bottom { display: none; }
+  .rtsp-input-wrap .q-field__before, .rtsp-input-wrap .q-field__after { display: none; }
+  .rtsp-input-wrap.q-field--focused .q-field__control,
+  .rtsp-input-wrap .q-field--focused .q-field__control { border-color: #bcb1f3 !important; }
+  .rtsp-input-wrap .q-field__control:after { background: #bcb1f3 !important; }
+  .rtsp-input-wrap.q-field--highlighted .q-field__control:after,
+  .rtsp-input-wrap .q-field--highlighted .q-field__control:after { background: #bcb1f3 !important; }
+  .btn-browse {
+    background-color: #bcb1f3;
+    color: #111;
+    border: none;
+    border-radius: 6px;
+    padding: 0 16px;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.2s;
+  }
+  .btn-browse:hover { opacity: 0.75; }
+  .btn-browse label { pointer-events: none; color: #111 !important; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .confidence-card {
+    background-color: white;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 0 24px 16px 24px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .confidence-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .confidence-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #111;
+  }
+  .confidence-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #111;
+  }
+  .confidence-subtitle {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.4);
+  }
+  .confidence-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.35);
+    margin-top: 4px;
+  }
+  .settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: auto;
+    padding-top: 8px;
+    padding-bottom: 24px;
+  }
+  .btn-return {
+    background-color: #bcb1f3;
+    border: none;
+    color: #111;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0 28px;
+    height: 44px;
+    border-radius: 8px;
+    transition: opacity 0.2s;
+  }
+  .btn-return:hover { opacity: 0.75; }
+  .btn-return label { pointer-events: none; color: #111 !important; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+  .btn-save {
+    background-color: #69fdb3;
+    border: none;
+    color: #111;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0 28px;
+    height: 44px;
+    border-radius: 8px;
+    transition: opacity 0.2s;
+    margin-right: 24px;
+  }
+  .btn-save:hover { opacity: 0.75; }
+  .btn-save label { pointer-events: none; color: #111 !important; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
 </style>'''
 
 
@@ -276,7 +463,11 @@ def build_sidebar(active: str) -> None:
             ):
                 ui.icon('view_in_ar').style('font-size:16px;')
                 ui.label('3D Reconstruction')
-
+            with ui.element('div').classes('nav-pill').on(
+                'click', lambda: ui.navigate.to('/settings')
+            ).style('margin-top: auto;'):
+                ui.icon('settings').style('font-size:16px;')
+                ui.label('Settings')
 
 # ---------------------------------------------------------------------------
 # UI
@@ -330,7 +521,10 @@ def main_page():
                 last_results = None
                 last_ui_update = 0.0
 
-                while state['running']:
+                frame_interval = 1.0 / handler.fps if not handler.is_live else 0.0
+
+                while state['running'] and not _shutting_down:
+                    frame_start = time.monotonic()
                     ret, frame = handler.get_frame()
                     if not ret:
                         if handler.is_live:
@@ -361,6 +555,12 @@ def main_page():
                         except Exception:
                             pass
                         last_ui_update = now
+
+                    if not handler.is_live:
+                        elapsed = time.monotonic() - frame_start
+                        sleep_time = frame_interval - elapsed
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
 
                 handler.release()
                 safe_log(f'Saved to: {SETTINGS["output_path"]}')
@@ -422,13 +622,13 @@ def main_page():
             # Bottom row: status + progress + log
             with ui.element('div').classes('bottom-section'):
                 with ui.element('div').classes('card status-card'):
-                    ui.label('Status').classes('card-header')
+                    ui.label('Status').classes('confidence-subtitle')
                     status = ui.label('Ready').style(
                         'color: #69fdb3 ; font-weight: bold; font-size: 1rem;'
                     )
 
                 with ui.element('div').classes('card progress-card'):
-                    ui.label('Tracking Tolerance').classes('card-header')
+                    ui.label('TRACKING TOLERENCE').classes('confidence-subtitle')
                     tolerance_slider = ui.slider(
                         min=0.0, max=1.0, step=0.01
                     ).classes('tolerance-slider').bind_value(state, 'tolerance')
@@ -508,7 +708,7 @@ def reconstruction_page():
             UI_MAX_FPS = 30
             interval = 1.0 / UI_MAX_FPS
             for img_file in image_files:
-                if not state['previewing']:
+                if not state['previewing'] or _shutting_down:
                     break
                 frame = cv.imread(os.path.join(rgb_dir, img_file))
                 if frame is None:
@@ -560,13 +760,13 @@ def reconstruction_page():
 
             with ui.element('div').classes('bottom-section'):
                 with ui.element('div').classes('card status-card'):
-                    ui.label('Status').classes('card-header')
+                    ui.label('Status').classes('confidence-subtitle')
                     status = ui.label('Ready').style(
                         'color: #69fdb3; font-weight: bold; font-size: 1rem;'
                     )
 
                 with ui.element('div').classes('card progress-card'):
-                    ui.label('Frame Progress').classes('card-header')
+                    ui.label('Frame Progress').classes('confidence-subtitle')
                     pc_progress_label = ui.label('').style('color: #242527; font-size: 0.875rem;')
                     pc_progress_label.set_visibility(False)
                     pc_progress = ui.linear_progress(0).style('width: 100%;')
@@ -578,11 +778,112 @@ def reconstruction_page():
                         ' font-family: monospace; font-size: 0.875rem; background: transparent; border: none;'
                     )
 
+@ui.page('/settings')
+def settings_page():
+    def save_and_back():
+        SETTINGS['local_video_path'] = state['vidPath']
+        SOURCE_MAP['Local Video File'] = state['vidPath']
+        SETTINGS['rtsp_url'] = state['rtspURL']
+        SOURCE_MAP['Phone Camera (RTSP)'] = state['rtspURL']
+        SETTINGS['output_path'] = state['outputPath']
+        SETTINGS['rgbd_video_dir'] = state['rgbdVideoDir']
+        SETTINGS['s_tolerence'] = state['tolerance']
+
+        save_settings()
+        ui.navigate.to('/')
+
+    state = {
+        'vidPath': SETTINGS['local_video_path'],
+        'rtspURL': SETTINGS['rtsp_url'],
+        'outputPath': SETTINGS['output_path'],
+        'rgbdVideoDir': SETTINGS['rgbd_video_dir'],
+        'tolerance': SETTINGS['s_tolerence'],
+    }
+    async def pick_video():
+        result = await app.native.main_window.create_file_dialog(
+            allow_multiple=False,
+            file_types=('Video Files (*.mp4;*.avi;*.mov;*.mkv)',)
+        )
+        if result:
+            state['vidPath'] = result[0]
+
+    async def pick_dir(type: str):
+        result = await app.native.main_window.create_file_dialog(
+            20,  # webview.FOLDER_DIALOG
+            allow_multiple=False,
+        )
+        if result and type == 'rgbd':
+            state['rgbdVideoDir'] = result[0]
+        elif result and type == 'output':
+            state['outputPath'] = os.path.join(result[0], 'data', 'output_videos', 'output.mp4')
+
+    ui.add_head_html(CSS)
+
+    with ui.element('div').classes('app-container'):
+        build_sidebar('')
+
+        with ui.element('div').classes('settings-main'):
+            ui.label('Application Parameters').classes('settings-title')
+            ui.label('Manage your video sources, output paths, and detection settings.').classes('settings-subtitle')
+
+            with ui.element('div').classes('settings-card'):
+
+                with ui.element('div').classes('settings-field'):
+                    ui.label('Local Video Path').classes('settings-field-label')
+                    with ui.element('div').classes('settings-field-row'):
+                        ui.input().classes('rtsp-input-wrap').bind_value(state, 'vidPath')
+                        with ui.element('button').classes('btn-browse').on('click', pick_video):
+                            ui.label('Browse')
+
+                with ui.element('div').classes('settings-field'):
+                    ui.label('RTSP URL').classes('settings-field-label')
+                    ui.input().classes('rtsp-input-wrap').bind_value(state, 'rtspURL')
+
+                with ui.element('div').classes('settings-field'):
+                    ui.label('Output Video Path').classes('settings-field-label')
+                    with ui.element('div').classes('settings-field-row'):
+                        ui.input().classes('rtsp-input-wrap').bind_value(state, 'outputPath')
+                        with ui.element('button').classes('btn-browse').on('click', lambda: pick_dir('output')):
+                            ui.label('Browse')
+
+                with ui.element('div').classes('settings-field'):
+                    ui.label('RGBD Directory').classes('settings-field-label')
+                    with ui.element('div').classes('settings-field-row'):
+                        ui.input().classes('rtsp-input-wrap').bind_value(state, 'rgbdVideoDir')
+                        with ui.element('button').classes('btn-browse').on('click', lambda: pick_dir('rgbd')):
+                            ui.label('Browse')
+
+            with ui.element('div').classes('confidence-card'):
+                with ui.element('div').classes('confidence-header'):
+                    ui.label('Confidence Threshold').classes('confidence-title')
+                    confidence_display = ui.label(f"{state['tolerance']:.2f}").classes('confidence-value')
+                ui.label('Minimum probability for object detection events').classes('confidence-subtitle').style('margin-bottom: 10px;')
+                ui.slider(min=0.0, max=1.0, step=0.01).classes('tolerance-slider').bind_value(state, 'tolerance').on(
+                    'update:model-value',
+                    lambda e: confidence_display.set_text(f'{e.args:.2f}')
+                )
+                with ui.element('div').classes('confidence-ticks'):
+                    ui.label('0.0 (Loose)')
+                    ui.label('0.5 (Neutral)')
+                    ui.label('1.0 (Strict)')
+
+            with ui.element('div').classes('settings-actions'):
+                with ui.element('button').classes('btn-return').on('click', lambda: ui.navigate.to('/')):
+                    ui.label('Return').style('color: black;')
+                with ui.element('button').classes('btn-save').on('click', save_and_back):
+                    ui.label('Save Configuration')
+
 
 # ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
 if __name__ in {"__main__", "__mp_main__"}:
+
+    @app.on_shutdown
+    async def _on_shutdown():
+        global _shutting_down
+        _shutting_down = True
+
     app.native.window_args['resizable'] = False
     app.native.settings['ALLOW_DOWNLOADS'] = True
     ui.run(native=True, window_size=(1185, 585), title='COMP 4990 — Computer Vision')
