@@ -212,3 +212,4 @@ src/yolov8n.pt
 /data/output_videos
 settings.json
 /data/output_videos
+*.mp4

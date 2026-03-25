@@ -35,7 +35,7 @@ class LiveGenerator:
         self.latest_frame = None
         self.finished_msg = None
         self.volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.002, sdf_trunc=0.01,
+            voxel_length=0.005, sdf_trunc=0.02,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
         )
 
@@ -117,7 +117,7 @@ class LiveGenerator:
             rgb_o3d = o3d.geometry.Image(rgb_fixed)
             depth_o3d = o3d.geometry.Image(depth_clean)
             rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                rgb_o3d, depth_o3d, depth_scale=1.0, depth_trunc=0.5, convert_rgb_to_intensity=False
+                rgb_o3d, depth_o3d, depth_scale=1.0, depth_trunc=2.0, convert_rgb_to_intensity=False
             )
 
             self.volume.integrate(rgbd, self.intrinsic, np.linalg.inv(c2w_final))
