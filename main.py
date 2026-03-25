@@ -8,7 +8,7 @@ import json
 from src.detector import Detector
 from src.tracker import Tracker
 from src.video_handler import VideoHandler
-from src.utils import draw_detections, draw_tracks
+from src.utils import draw_detections, draw_tracks, count_objects
 from src.tum_generator import TUMGenerator as tum
 from src.live_generator import LiveGenerator
 import webview
@@ -74,7 +74,7 @@ load_settings()
 
 SOURCE_MAP = {
     'Local Video File': SETTINGS['local_video_path'],
-    'Laptop Webcam': 0,
+    'Laptop Webcam': 0,  # 0 = default system camera index for opencv
     'Phone Camera (RTSP)': SETTINGS['rtsp_url'],
 }
 
@@ -269,6 +269,11 @@ CSS = '''<style>
     margin: 0;
   }
   .nicegui-log { background-color: transparent !important; }
+
+  /* Count card */
+  .count-card { min-width: 160px; max-width: 260px; background-color: white; }
+  .count-text { color: #242527; font-size: 0.82rem; font-weight: 600; font-family: monospace; white-space: pre-wrap; line-height: 1.6; }
+  .count-number { color: #69fdb3; font-weight: 800; }
 
   /* Tolerance card */
   .tolerance-slider { width: 100%; margin: 2px 0; }
@@ -517,14 +522,23 @@ def main_page():
         update_mode_buttons(state['tracking'])
         log.push(f'Mode: {mode_name}')
 
-    def run_detection():
+    def reset_run_button():
+        run_label.set_text('Run Detection')
+        run_btn.style('background-color: #69fdb3')
+        run_icon.set_source('./ui_IMG/play.svg')
+
+    def toggle_detection():
         if state['running']:
-            log.push('Detection is already running.')
+            state['running'] = False
+            log.push('Stopping...')
             return
         source = SOURCE_MAP[state['source']]
         status.set_text('Running...')
         status.style('color: #facc15')
         log.push(f'Starting: {state["source"]}')
+        run_label.set_text('Stop')
+        run_btn.style('background-color: #bcb1f3')
+        run_icon.set_source('./ui_IMG/stop.svg')
 
         def detection_loop():
             state['running'] = True
@@ -545,13 +559,13 @@ def main_page():
                 handler = VideoHandler(source, SETTINGS['output_path'])
                 safe_log(f'Mode: {"Tracking" if state["tracking"] else "Detection"} | Connected: {handler.width}x{handler.height} @ {handler.fps} FPS')
 
-                UI_MAX_FPS = 20
+                UI_MAX_FPS = 20  # cap ui refreshes so the browser doesn't get flooded with jpeg frames
                 ui_interval = 1.0 / UI_MAX_FPS
                 last_result = None
                 last_trails = {}
                 last_ui_update = 0.0
 
-                frame_interval = 1.0 / handler.fps if not handler.is_live else 0.0
+                frame_interval = 1.0 / handler.fps if not handler.is_live else 0.0  # live sources run uncapped; files are paced to their native fps
 
                 while state['running'] and not _shutting_down:
                     frame_start = time.monotonic()
@@ -566,8 +580,8 @@ def main_page():
                     if frame is None:
                         continue
 
-                    PROCESS_WIDTH = 640
-                    scale = PROCESS_WIDTH / frame.shape[1]
+                    PROCESS_WIDTH = 640  # run inference at this width for speed; full res is too slow
+                    scale = PROCESS_WIDTH / frame.shape[1]  # uniform scale factor to preserve aspect ratio
                     pf = cv.resize(frame, (PROCESS_WIDTH, int(frame.shape[0] * scale)))
 
                     if active_tracker:
@@ -583,6 +597,16 @@ def main_page():
                     if now - last_ui_update >= ui_interval:
                         try:
                             video_image.set_source(frame_to_data_url(pf))
+                        except Exception:
+                            pass
+                        try:
+                            counts = count_objects(last_result)
+                            if counts:
+                                count_label.set_text(
+                                    '\n'.join(f'{name}: {n}' for name, n in sorted(counts.items()))
+                                )
+                            else:
+                                count_label.set_text('\u2014')
                         except Exception:
                             pass
                         last_ui_update = now
@@ -604,17 +628,12 @@ def main_page():
                 try:
                     status.set_text('Ready')
                     status.style('color: #69fdb3')
+                    count_label.set_text('\u2014')
+                    reset_run_button()
                 except Exception:
                     pass
 
-        threading.Thread(target=detection_loop, daemon=True).start()
-
-    def stop_detection():
-        if state['running']:
-            state['running'] = False
-            log.push('Stopping...')
-        else:
-            log.push('Nothing is running.')
+        threading.Thread(target=detection_loop, daemon=True).start()  # daemon=True so this thread dies automatically when the app closes
 
     # ── Layout ────────────────────────────────────────────────────────────────
     with ui.element('div').classes('app-container'):
@@ -633,19 +652,17 @@ def main_page():
 
                 with ui.element('div').classes('control-panel'):
                     with ui.element('div').classes('run-stop'):
-                        with ui.element('button').classes('btn-run').on('click', run_detection):
-                            ui.label('Run Detection')
-                            ui.image('./ui_IMG/play.svg').style('width: 15px;')
-                        with ui.element('button').classes('btn-stop').on('click', stop_detection):
-                            ui.label('Stop')
-                            ui.image('./ui_IMG/stop.svg').style('width: 15px;')
+                        run_btn = ui.element('button').classes('btn-run').on('click', toggle_detection)
+                        with run_btn:
+                            run_label = ui.label('Run Detection')
+                            run_icon = ui.image('./ui_IMG/play.svg').style('width: 15px;')
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Mode:').classes('source-title')
                         mode_btns: dict = {}
                         for mode_name in ['Tracking', 'Detection']:
                             mbtn = ui.element('button').classes('source-btn').on(
-                                'click', lambda m=mode_name: toggle_mode(m)
+                                'click', lambda m=mode_name: toggle_mode(m)  # default arg captures current loop value, avoids late-binding closure bug
                             )
                             with mbtn:
                                 ui.label(mode_name)
@@ -657,7 +674,7 @@ def main_page():
                         source_btns: dict = {}
                         for src_name in SOURCE_MAP.keys():
                             btn_el = ui.element('button').classes('source-btn').on(
-                                'click', lambda n=src_name: select_source(n)
+                                'click', lambda n=src_name: select_source(n)  # default arg captures current loop value
                             )
                             with btn_el:
                                 ui.label(src_name)
@@ -670,6 +687,10 @@ def main_page():
                     status = ui.label('Ready').style(
                         'color: #69fdb3 ; font-weight: bold; font-size: 1rem;'
                     )
+
+                with ui.element('div').classes('card count-card'):
+                    ui.label('OBJECTS').classes('confidence-subtitle')
+                    count_label = ui.label('—').classes('count-text')
 
                 with ui.element('div').classes('card progress-card'):
                     ui.label('TRACKING TOLERENCE').classes('confidence-subtitle')
@@ -791,7 +812,7 @@ def reconstruction_page():
         def generate_point_cloud():
             try:
                 tum.generate_from_tum(SETTINGS['rgbd_video_dir'], output_path=OUTPUT_3D_MODELS_PATH,
-                                      on_progress=on_progress)
+                on_progress=on_progress)
                 log.push('Point cloud generation complete!')
             except Exception as e:
                 log.push(f'Error: {e}')
@@ -805,7 +826,7 @@ def reconstruction_page():
                 ui.timer(0.1, ui_reset, once=True)
 
         state['running'] = True
-        threading.Thread(target=generate_point_cloud, daemon=True).start()
+        threading.Thread(target=generate_point_cloud, daemon=True).start()  # daemon=True so this thread dies automatically when the app closes
 
     def reset_preview_button():
         preview_label.set_text('Preview Video')
@@ -825,8 +846,7 @@ def reconstruction_page():
             allowed_ext = ('.jpg', '.jpeg', '.png')
             image_files = sorted(
                 [f for f in os.listdir(rgb_dir) if f.lower().endswith(allowed_ext)],
-                key=lambda n: float(os.path.splitext(n)[0]) if os.path.splitext(n)[0].replace('.', '',
-                                                                                              1).isdigit() else n
+                key=lambda n: float(os.path.splitext(n)[0]) if os.path.splitext(n)[0].replace('.', '',1).isdigit() else n
             )
             if not image_files:
                 log.push('No frames found in rgb/ directory.')
@@ -900,7 +920,7 @@ def reconstruction_page():
                         source_btns: dict = {}
                         for src_name in ['TUM Dataset', 'Live Stream']:
                             btn_el = ui.element('button').classes('source-btn').on(
-                                'click', lambda n=src_name: select_source(n)
+                                'click', lambda n=src_name: select_source(n)  # default arg captures current loop value
                             )
                             with btn_el:
                                 ui.label(src_name)
@@ -1027,7 +1047,7 @@ def settings_page():
 # ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
-if __name__ in {"__main__", "__mp_main__"}:
+if __name__ in {"__main__", "__mp_main__"}:  # nicegui relaunches the script under __mp_main__ in native mode
 
     @app.on_shutdown
     async def _on_shutdown():
@@ -1035,6 +1055,6 @@ if __name__ in {"__main__", "__mp_main__"}:
         _shutting_down = True
 
     app.native.window_args['resizable'] = True
-    app.native.window_args['min_size'] = (900, 700)
+    app.native.window_args['min_size'] = (1200, 620)
     app.native.settings['ALLOW_DOWNLOADS'] = True
-    ui.run(native=True, window_size=(1400, 800), title='COMP 4990 — Computer Vision')
+    ui.run(native=True, window_size=(1200, 700), title='COMP 4990 — Computer Vision')

@@ -5,7 +5,7 @@ This module handles YOLO detection.
 """
 
 class Detector:
-    def __init__(self, model_path='yolov8n.pt'):
+    def __init__(self, model_path='yolov8s.pt'):
         """Initializes the YOLO detector."""
         self.model = YOLO(model_path)
 
