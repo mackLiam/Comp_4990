@@ -881,7 +881,7 @@ def reconstruction_page():
                     except Exception:
                         pass
 
-                ui.timer(0.1, finish_ui, once=True)
+                finish_ui()
 
             threading.Thread(target=playback_loop, daemon=True).start()
 
