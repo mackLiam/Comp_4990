@@ -744,6 +744,11 @@ def reconstruction_page():
 
         # 1. Update the live scanning progress
         if state['live_scanning']:
+            # Only change status to Scanning once frames actually start hitting the buffer
+            if live_gen.count > 0 and status.text == 'Waiting for video...':
+                status.set_text('Scanning...')
+                log.push('Receiving frames from iPhone...')
+
             pc_progress.set_visibility(True)
             pc_progress_label.set_visibility(True)
             pos = live_gen.current_pos
@@ -767,24 +772,48 @@ def reconstruction_page():
             # Reset UI state
             status.set_text('Ready')
             status.style('color: #69fdb3')
+
+            # Reset the toggle button back to its initial state
+            live_label.set_text('Start Live Scan')
+            live_icon.set_source('./ui_IMG/cube.svg')
+
             pc_progress.set_visibility(False)
             state['live_scanning'] = False
 
             # Clear the message to avoid duplicate processing
             live_gen.finished_msg = None
 
-            # Register the main-thread timer (runs 10 times a second)
-
     ui.timer(0.1, update_reconstruction_ui)
 
-    def start_live_scan():
-        if state['live_scanning']: return
+    def toggle_live_scan():
+        # If we are already connected/scanning, treat this as a CANCEL/STOP button
+        if state['live_scanning']:
+            live_gen.stop_scan()
+            state['live_scanning'] = False
+            log.push('Live scan aborted by user.')
+
+            # Reset UI
+            status.set_text('Ready')
+            status.style('color: #69fdb3')
+            live_label.set_text('Start Live Scan')
+            live_icon.set_source('./ui_IMG/cube.svg')
+            pc_progress.set_visibility(False)
+            pc_progress_label.set_visibility(False)
+            return
+
+        # Otherwise, initialize the connection
         success, msg = live_gen.start_scan()
         if success:
             state['live_scanning'] = True
-            log.push('Live scan started. Stop from the iPhone app when done.')
-            status.set_text('Scanning...')
+            # Explicitly tell the user what to do next
+            log.push('Connected to iPhone. Press RECORD in the Record3D app to begin.')
+            status.set_text('Waiting for video...')
             status.style('color: #facc15')
+
+            # Morph the button into a Cancel button
+            live_label.set_text('Cancel Scan')
+            live_icon.set_source('./ui_IMG/stop.svg')
+
             pc_progress.set_visibility(True)
             pc_progress_label.set_visibility(True)
         else:
@@ -910,10 +939,10 @@ def reconstruction_page():
                             preview_label = ui.label('Preview Video')
                             preview_icon = ui.image('./ui_IMG/play.svg').style('width: 15px;')
 
-                        btn_start_live = ui.element('button').classes('btn-run').on('click', start_live_scan)
+                        btn_start_live = ui.element('button').classes('btn-run').on('click', toggle_live_scan)
                         with btn_start_live:
-                            ui.label('Start Live Scan')
-                            ui.image('./ui_IMG/cube.svg').style('width: 15px;')
+                            live_label = ui.label('Start Live Scan')
+                            live_icon = ui.image('./ui_IMG/cube.svg').style('width: 15px;')
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Data Source:').classes('source-title')
