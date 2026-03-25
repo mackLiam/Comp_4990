@@ -6,8 +6,9 @@ import base64
 import json
 
 from src.detector import Detector
+from src.tracker import Tracker
 from src.video_handler import VideoHandler
-from src.utils import draw_detections
+from src.utils import draw_detections, draw_tracks
 from src.tum_generator import TUMGenerator as tum
 from src.live_generator import LiveGenerator
 import webview
@@ -83,8 +84,10 @@ SOURCE_MAP = {
 # ---------------------------------------------------------------------------
 CSS = '''<style>
   * { box-sizing: border-box; }
-  body, .q-page, .nicegui-content { padding: 0 !important; margin: 0 !important; }
-  .q-page { background-color: #242527 !important; }
+  html, body { width: 100%; height: 100%; padding: 0 !important; margin: 0 !important; overflow: hidden; }
+  body, .q-page, .nicegui-content { padding: 0 !important; margin: 0 !important; width: 100%; }
+  .q-page { background-color: #242527 !important; height: 100vh !important; }
+  .nicegui-content { height: 100vh; display: flex; flex-direction: column; }
 
   /* Scrollbar */
   * { scrollbar-width: thin; scrollbar-color: #242527 transparent; }
@@ -96,6 +99,7 @@ CSS = '''<style>
 
   .app-container {
     display: flex;
+    width: 100%;
     height: 100vh;
     background-color: #242527;
     overflow: hidden;
@@ -145,6 +149,7 @@ CSS = '''<style>
     background-color: #dedede;
     border-radius: 20px;
     flex: 1;
+    min-width: 0;
     margin: 5px 5px 5px 0;
     overflow: auto;
     display: flex;
@@ -159,16 +164,17 @@ CSS = '''<style>
   .top-part {
     display: flex;
     gap: 10px;
-    margin-left: 10px;
-    margin-top: 10px;
-    width: 1140px;
+    margin: 10px 10px 0 10px;
+    width: calc(100% - 20px);
+    flex: 1;
+    min-height: 0;
   }
   .video-box {
-    width: 800px;
-    height: 450px;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
     background-color: #242527;
     border-radius: 20px;
-    flex-shrink: 0;
     overflow: hidden;
     position: relative;
   }
@@ -191,12 +197,12 @@ CSS = '''<style>
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    height: 450px;
-    width: 320px;
+    flex-shrink: 0;
+    width: clamp(240px, 24%, 340px);
   }
   .run-stop { display: flex; flex-direction: column; gap: 10px; }
   .btn-run, .btn-stop {
-    min-width: 320px;
+    width: 100%;
     height: 70px;
     border-radius: 20px;
     font-size: 16px;
@@ -243,7 +249,7 @@ CSS = '''<style>
   .source-btn:hover { background-color: #ffffff; color: #242527; }
 
   /* Bottom cards */
-  .bottom-section { display: flex; gap: 10px; margin: 10px; max-width: 1130px; }
+  .bottom-section { display: flex; gap: 10px; margin: 10px; width: calc(100% - 20px); flex-shrink: 0; }
   .card {
     border-radius: 15px;
     padding: 12px;
@@ -280,13 +286,12 @@ CSS = '''<style>
   .settings-main {
     background-color: #dedede;
     border-radius: 20px;
-    margin: 5px 0;
+    margin: 5px 5px 5px 0;
     flex: 1;
+    min-width: 0;
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    max-width: 930px;
-    width: 930px;
   }
   .settings-title {
     font-size: 2rem;
@@ -480,7 +485,7 @@ def build_sidebar(active: str) -> None:
 # ---------------------------------------------------------------------------
 @ui.page('/')
 def main_page():
-    state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence']}
+    state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence'], 'tracking': True}
 
     ui.add_head_html(CSS)
 
@@ -496,6 +501,21 @@ def main_page():
     def select_source(name: str) -> None:
         state['source'] = name
         update_source_buttons(name)
+
+    def update_mode_buttons(is_tracking: bool) -> None:
+        for name, btn in mode_btns.items():
+            if (name == 'Tracking') == is_tracking:
+                btn.classes(add='active-src')
+            else:
+                btn.classes(remove='active-src')
+
+    def toggle_mode(mode_name: str) -> None:
+        if state['running']:
+            log.push('Stop detection before switching mode.')
+            return
+        state['tracking'] = (mode_name == 'Tracking')
+        update_mode_buttons(state['tracking'])
+        log.push(f'Mode: {mode_name}')
 
     def run_detection():
         if state['running']:
@@ -516,15 +536,19 @@ def main_page():
                     print(f'[log fallback] {msg}')
 
             try:
-                detector = Detector()
+                active_tracker = None
+                active_detector = None
+                if state['tracking']:
+                    active_tracker = Tracker()
+                else:
+                    active_detector = Detector()
                 handler = VideoHandler(source, SETTINGS['output_path'])
-                safe_log(f'Connected: {handler.width}x{handler.height} @ {handler.fps} FPS')
+                safe_log(f'Mode: {"Tracking" if state["tracking"] else "Detection"} | Connected: {handler.width}x{handler.height} @ {handler.fps} FPS')
 
-                DETECT_EVERY_N = 3
                 UI_MAX_FPS = 20
                 ui_interval = 1.0 / UI_MAX_FPS
-                frame_count = 0
-                last_results = None
+                last_result = None
+                last_trails = {}
                 last_ui_update = 0.0
 
                 frame_interval = 1.0 / handler.fps if not handler.is_live else 0.0
@@ -546,11 +570,12 @@ def main_page():
                     scale = PROCESS_WIDTH / frame.shape[1]
                     pf = cv.resize(frame, (PROCESS_WIDTH, int(frame.shape[0] * scale)))
 
-                    frame_count += 1
-                    if last_results is None or frame_count % DETECT_EVERY_N == 0:
-                        last_results = detector.detect(pf, conf=state['tolerance'])
-
-                    pf = draw_detections(pf, last_results)
+                    if active_tracker:
+                        last_result, last_trails = active_tracker.track(pf, conf=state['tolerance'])
+                        pf = draw_tracks(pf, last_result, last_trails)
+                    else:
+                        last_result = active_detector.detect(pf, conf=state['tolerance'])
+                        pf = draw_detections(pf, last_result)
                     out_frame = cv.resize(pf, (handler.width, handler.height))
                     handler.write_frame(out_frame)
 
@@ -574,6 +599,8 @@ def main_page():
                 safe_log(f'Error: {e}')
             finally:
                 state['running'] = False
+                if active_tracker:
+                    active_tracker.reset()
                 try:
                     status.set_text('Ready')
                     status.style('color: #69fdb3')
@@ -612,6 +639,18 @@ def main_page():
                         with ui.element('button').classes('btn-stop').on('click', stop_detection):
                             ui.label('Stop')
                             ui.image('./ui_IMG/stop.svg').style('width: 15px;')
+
+                    with ui.element('div').classes('source-section'):
+                        ui.label('Mode:').classes('source-title')
+                        mode_btns: dict = {}
+                        for mode_name in ['Tracking', 'Detection']:
+                            mbtn = ui.element('button').classes('source-btn').on(
+                                'click', lambda m=mode_name: toggle_mode(m)
+                            )
+                            with mbtn:
+                                ui.label(mode_name)
+                            mode_btns[mode_name] = mbtn
+                        update_mode_buttons(state['tracking'])
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Video Source:').classes('source-title')
@@ -995,6 +1034,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         global _shutting_down
         _shutting_down = True
 
-    app.native.window_args['resizable'] = False
+    app.native.window_args['resizable'] = True
+    app.native.window_args['min_size'] = (900, 700)
     app.native.settings['ALLOW_DOWNLOADS'] = True
     ui.run(native=True, window_size=(1400, 800), title='COMP 4990 — Computer Vision')

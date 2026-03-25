@@ -1,8 +1,11 @@
 import cv2 as cv
+import numpy as np
 
 """
 This module handles drawing bounding boxes and labels on the frame.
 """
+MINT = (179, 253, 105)  # #69fdb3 in BGR
+
 
 def draw_detections(frame, detections):
     """
@@ -16,7 +19,7 @@ def draw_detections(frame, detections):
     for i in range(len(boxes)):
         x1, y1, x2, y2 = map(int, boxes[i])
         
-        MINT = (179, 253, 105)  # #69fdb3 in BGR
+
         cv.rectangle(frame, (x1, y1), (x2, y2), MINT, 2)
         
         # Draw label background and text
@@ -24,6 +27,36 @@ def draw_detections(frame, detections):
         (w, h), _ = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         cv.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), MINT, -1)
         cv.putText(frame, label, (x1, y1 - 5), 
-                   cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         
+    return frame
+
+def draw_tracks(frame, result, trails):
+
+    if result.boxes.id is None:
+        return frame
+
+    ids    = result.boxes.id.numpy().astype(int)
+    boxes  = result.boxes.xyxy.numpy()
+    confs  = result.boxes.conf.numpy()
+    classes = result.boxes.cls.numpy().astype(int)
+    names  = result.names
+
+    for i, tid in enumerate(ids):
+        x1, y1, x2, y2 = map(int, boxes[i])
+        cv.rectangle(frame, (x1, y1), (x2, y2), MINT, 2)
+
+        label = f"#{tid} {names[classes[i]]} {confs[i]:.2f}"
+        (w, h), _ = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), MINT, -1)
+        cv.putText(frame, label, (x1, y1 - 5),
+        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+        # Draw motion trail
+        pts = trails.get(tid, [])
+        for j in range(1, len(pts)):
+            alpha = j / len(pts)          # fade older points
+            colour = tuple(int(c * alpha) for c in MINT)
+            cv.line(frame, pts[j-1], pts[j], colour, 2)
+
     return frame
