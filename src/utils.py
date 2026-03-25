@@ -1,5 +1,6 @@
 import cv2 as cv
 import numpy as np
+from collections import Counter
 
 """
 This module handles drawing bounding boxes and labels on the frame.
@@ -60,3 +61,16 @@ def draw_tracks(frame, result, trails):
             cv.line(frame, pts[j-1], pts[j], colour, 2)
 
     return frame
+
+def count_objects(result) -> dict:
+    """Returns a dict mapping class name -> count from a YOLO result."""
+    if result is None or result.boxes is None or len(result.boxes) == 0:
+        return {}
+    classes = result.boxes.cls.numpy().astype(int)
+    names = result.names
+    # Build a list of class name strings, one entry per detected box
+    class_name_list = [names[c] for c in classes]
+    # Count how many times each name appears
+    counts = Counter(class_name_list)
+
+    return dict(counts)

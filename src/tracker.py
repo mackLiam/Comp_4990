@@ -3,7 +3,7 @@ from collections import defaultdict
 import numpy as np
 
 class Tracker:
-    def __init__(self, model_path='yolov8n.pt', trail_length=50):
+    def __init__(self, model_path='yolov8s.pt', trail_length=50):
         self.model = YOLO(model_path)
         self.trail_length = trail_length
         # maps track_id -> list of (cx, cy) centre points
