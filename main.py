@@ -842,7 +842,7 @@ def reconstruction_page():
             try:
                 tum.generate_from_tum(SETTINGS['rgbd_video_dir'], output_path=OUTPUT_3D_MODELS_PATH,
                 on_progress=on_progress)
-                log.push('Point cloud generation complete!')
+                # log.push('Point cloud generation complete!')
             except Exception as e:
                 log.push(f'Error: {e}')
             finally:
@@ -851,8 +851,6 @@ def reconstruction_page():
                 def ui_reset():
                     status.set_text('Ready')
                     status.style('color: #69fdb3')
-
-                ui.timer(0.1, ui_reset, once=True)
 
         state['running'] = True
         threading.Thread(target=generate_point_cloud, daemon=True).start()  # daemon=True so this thread dies automatically when the app closes
