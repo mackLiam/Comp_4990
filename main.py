@@ -81,391 +81,11 @@ SOURCE_MAP = {
 
 # ---------------------------------------------------------------------------
 # UI helpers
-# ---------------------------------------------------------------------------
-CSS = '''<style>
-  * { box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; padding: 0 !important; margin: 0 !important; overflow: hidden; }
-  body, .q-page, .nicegui-content { padding: 0 !important; margin: 0 !important; width: 100%; }
-  .q-page { background-color: #242527 !important; height: 100vh !important; }
-  .nicegui-content { height: 100vh; display: flex; flex-direction: column; }
-
-  /* Scrollbar */
-  * { scrollbar-width: thin; scrollbar-color: #242527 transparent; }
-  *::-webkit-scrollbar { width: 6px; height: 6px; }
-  *::-webkit-scrollbar-track { background: transparent; }
-  *::-webkit-scrollbar-thumb { background-color: #242527; border-radius: 3px; border: none; }
-  *::-webkit-scrollbar-corner { background: transparent; }
-  *::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
-
-  .app-container {
-    display: flex;
-    width: 100%;
-    height: 100vh;
-    background-color: #242527;
-    overflow: hidden;
-  }
-
-  /* Sidebar */
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    background-color: #242527;
-    min-width: 220px;
-    padding: 10px;
-    flex-shrink: 0;
-  }
-  .sidebar-icon {
-    margin: 20px 0 0 10px;
-    font-size: 36px !important;
-    color: white !important;
-    width: 36px;
-  }
-  .nav-cont {
-    margin-top: 40px;
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    flex: 1;
-  }
-  .nav-pill {
-    border-radius: 20px;
-    padding: 10px 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: white;
-    transition: background-color 0.3s, color 0.3s;
-    user-select: none;
-  }
-  .nav-pill .q-icon, .nav-pill label { color: white !important; pointer-events: none; }
-  .nav-pill.active { background-color: white; color: #242527; }
-  .nav-pill.active .q-icon, .nav-pill.active label { color: #242527 !important; }
-  .nav-pill:hover { background-color: white; color: #242527; }
-  .nav-pill:hover .q-icon, .nav-pill:hover label { color: #242527 !important; }
-
-  /* Main panel */
-  .main-panel {
-    background-color: #dedede;
-    border-radius: 20px;
-    flex: 1;
-    min-width: 0;
-    margin: 5px 5px 5px 0;
-    overflow: auto;
-    display: flex;
-    flex-direction: column;
-  }
-  .page-title {
-    margin: 15px;
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: #111;
-  }
-  .top-part {
-    display: flex;
-    gap: 10px;
-    margin: 10px 10px 0 10px;
-    width: calc(100% - 20px);
-    flex: 1;
-    min-height: 0;
-  }
-  .video-box {
-    flex: 1;
-    min-width: 0;
-    height: 100%;
-    background-color: #242527;
-    border-radius: 20px;
-    overflow: hidden;
-    position: relative;
-  }
-  .video-label {
-    position: absolute;
-    top: 12px;
-    left: 16px;
-    color: rgba(255,255,255,0.55);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    pointer-events: none;
-    z-index: 10;
-    user-select: none;
-  }
-
-  /* Control panel */
-  .control-panel {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    flex-shrink: 0;
-    width: clamp(240px, 24%, 340px);
-  }
-  .run-stop { display: flex; flex-direction: column; gap: 10px; }
-  .btn-run, .btn-stop {
-    width: 100%;
-    height: 70px;
-    border-radius: 20px;
-    font-size: 16px;
-    font-weight: 600;
-    color: black;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 20px;
-  }
-  .btn-run { background-color: #69fdb3; transition: opacity 0.5s; }
-  .btn-run:hover { opacity: 0.6; }
-  .btn-stop { background-color: #bcb1f3; transition: opacity 0.5s; }
-  .btn-stop:hover { opacity: 0.6; }
-  .btn-run label, .btn-stop label {
-    pointer-events: none;
-    color: white !important;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  /* Source selector */
-  .source-section { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-  .source-title { font-weight: 600; color: #242527; font-size: 0.95rem; }
-  .source-btn {
-    width: 100%;
-    padding: 10px;
-    border-radius: 10px;
-    text-align: left;
-    background-color: #3a3b3d;
-    color: #d1d5db;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    transition: background-color 0.2s, color 0.2s;
-  }
-  .source-btn label { pointer-events: none; color: inherit !important; font-size: 14px; cursor: pointer; }
-  .source-btn.active-src { background-color: #ffffff; color: #242527; }
-  .source-btn:hover { background-color: #ffffff; color: #242527; }
-
-  /* Bottom cards */
-  .bottom-section { display: flex; gap: 10px; margin: 10px; width: calc(100% - 20px); flex-shrink: 0; }
-  .card {
-    border-radius: 15px;
-    padding: 12px;
-    background-color: #1e293b;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .status-card { min-width: 180px; background-color: white; }
-  .progress-card { min-width: 180px; background-color: white; }
-  .log-card { flex: 1; background-color: white; }
-  .card-header {
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    color: black;
-    opacity: 0.5;
-    margin: 0;
-  }
-  .nicegui-log { background-color: transparent !important; }
-
-  /* Count card */
-  .count-card { min-width: 160px; max-width: 260px; background-color: white; }
-  .count-text { color: #242527; font-size: 0.82rem; font-weight: 600; font-family: monospace; white-space: pre-wrap; line-height: 1.6; }
-  .count-number { color: #69fdb3; font-weight: 800; }
-
-  /* Tolerance card */
-  .tolerance-slider { width: 100%; margin: 2px 0; }
-  .tolerance-slider .q-slider__track { background: #69fdb3 !important; }
-  .tolerance-slider .q-slider__thumb { color: #69fdb3 !important; }
-  .tolerance-slider .q-slider__thumb path { stroke: #69fdb3 !important; fill: #69fdb3 !important; }
-  .tolerance-slider .q-slider__track-container .q-slider__track { background: #69fdb3 !important; }
-  .tolerance-slider .q-slider__selection { background: #69fdb3 !important; }
-  .tolerance-input .q-field__control { background: transparent !important; border-radius: 8px; min-height: 36px; }
-  .tolerance-input .q-field__native { color: #242527 !important; font-size: 14px; padding: 2px 8px; }
-  .tolerance-input .q-field__bottom { display: none; }
-  .tolerance-input { width: 100%; }
-
-  /* Settings page */
-  .settings-main {
-    background-color: #dedede;
-    border-radius: 20px;
-    margin: 5px 5px 5px 0;
-    flex: 1;
-    min-width: 0;
-    overflow-x: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-  .settings-title {
-    font-size: 2rem;
-    font-weight: 800;
-    color: black;
-    margin: 24px 0 0 24px;
-    letter-spacing: 0.04em;
-    margin-bottom: 4px;
-  }
-  .settings-subtitle {
-    font-size: 0.8rem;
-    color: rgba(0,0,0,0.5);
-    margin-bottom: 24px;
-    margin-left: 24px;
-  }
-  .settings-card {
-    background-color: white;
-    width: calc(100% - 48px);
-    border-radius: 12px;
-    padding: 24px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px 32px;
-    margin-bottom: 16px;
-    margin: 0 24px 16px 24px;
-  }
-  .settings-field { display: flex; flex-direction: column; gap: 6px; }
-  .settings-field-label {
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(0,0,0,0.5);
-  }
-  .settings-field-row { display: flex; gap: 8px; align-items: center; }
-  .settings-input-wrap { flex: 1; }
-  .settings-input-wrap .q-field__control {
-    background: #2a2d33 !important;
-    border-radius: 6px !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-  }
-  .settings-input-wrap .q-field__native { color: white !important; font-size: 13px; padding-left: 8px !important; }
-  .settings-input-wrap .q-field__bottom { display: none; }
-  .settings-input-wrap .q-field__before, .settings-input-wrap .q-field__after { display: none; }
-
-  .rtsp-input-wrap { flex: 1; }
-  .rtsp-input-wrap .q-field__control {
-    background: #f5f5f3 !important;
-    border-radius: 6px !important;
-    border: 1px solid rgba(0,0,0,0.1) !important;
-  }
-  .rtsp-input-wrap .q-field__native { color: #111 !important; font-size: 13px; padding-left: 8px !important; }
-  .rtsp-input-wrap .q-field__bottom { display: none; }
-  .rtsp-input-wrap .q-field__before, .rtsp-input-wrap .q-field__after { display: none; }
-  .rtsp-input-wrap.q-field--focused .q-field__control,
-  .rtsp-input-wrap .q-field--focused .q-field__control { border-color: #bcb1f3 !important; }
-  .rtsp-input-wrap .q-field__control:after { background: #bcb1f3 !important; }
-  .rtsp-input-wrap.q-field--highlighted .q-field__control:after,
-  .rtsp-input-wrap .q-field--highlighted .q-field__control:after { background: #bcb1f3 !important; }
-  .btn-browse {
-    background-color: #bcb1f3;
-    color: #111;
-    border: none;
-    border-radius: 6px;
-    padding: 0 16px;
-    align-self: stretch;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.2s;
-  }
-  .btn-browse:hover { opacity: 0.75; }
-  .btn-browse label { pointer-events: none; color: #111 !important; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-  .confidence-card {
-    background-color: white;
-    border-radius: 12px;
-    padding: 24px 28px;
-    margin: 0 24px 16px 24px;
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .confidence-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-  .confidence-title {
-    font-size: 1.3rem;
-    font-weight: 700;
-    color: #111;
-  }
-  .confidence-value {
-    font-size: 1.3rem;
-    font-weight: 700;
-    color: #111;
-  }
-  .confidence-subtitle {
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: rgba(0,0,0,0.4);
-  }
-  .confidence-ticks {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.6rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(0,0,0,0.35);
-    margin-top: 4px;
-  }
-  .settings-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: auto;
-    padding-top: 8px;
-    padding-bottom: 24px;
-  }
-  .btn-return {
-    background-color: #bcb1f3;
-    border: none;
-    color: #111;
-    font-size: 0.75rem;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    cursor: pointer;
-    padding: 0 28px;
-    height: 44px;
-    border-radius: 8px;
-    transition: opacity 0.2s;
-  }
-  .btn-return:hover { opacity: 0.75; }
-  .btn-return label { pointer-events: none; color: #111 !important; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
-  .btn-save {
-    background-color: #69fdb3;
-    border: none;
-    color: #111;
-    font-size: 0.75rem;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    cursor: pointer;
-    padding: 0 28px;
-    height: 44px;
-    border-radius: 8px;
-    transition: opacity 0.2s;
-    margin-right: 24px;
-  }
-  .btn-save:hover { opacity: 0.75; }
-  .btn-save label { pointer-events: none; color: #111 !important; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
-</style>'''
-
-
+# --------------------------------------------------------------------------
 def build_sidebar(active: str) -> None:
     """Renders the shared sidebar. active = 'detection' | 'reconstruction'"""
     with ui.element('div').classes('sidebar'):
-        ui.image('./ui_IMG/eye.svg').classes('sidebar-icon')
+        ui.image('./ui/eye.svg').classes('sidebar-icon')
         with ui.element('div').classes('nav-cont'):
             detection_cls = 'nav-pill active' if active == 'detection' else 'nav-pill'
             recon_cls = 'nav-pill active' if active == 'reconstruction' else 'nav-pill'
@@ -492,7 +112,7 @@ def build_sidebar(active: str) -> None:
 def main_page():
     state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence'], 'tracking': True}
 
-    ui.add_head_html(CSS)
+    ui.add_css('./ui/styles.css')
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -525,7 +145,7 @@ def main_page():
     def reset_run_button():
         run_label.set_text('Run Detection')
         run_btn.style('background-color: #69fdb3')
-        run_icon.set_source('./ui_IMG/play.svg')
+        run_icon.set_source('./ui/play.svg')
 
     def toggle_detection():
         if state['running']:
@@ -538,7 +158,7 @@ def main_page():
         log.push(f'Starting: {state["source"]}')
         run_label.set_text('Stop')
         run_btn.style('background-color: #bcb1f3')
-        run_icon.set_source('./ui_IMG/stop.svg')
+        run_icon.set_source('./ui/stop.svg')
 
         def detection_loop():
             state['running'] = True
@@ -655,7 +275,7 @@ def main_page():
                         run_btn = ui.element('button').classes('btn-run').on('click', toggle_detection)
                         with run_btn:
                             run_label = ui.label('Run Detection')
-                            run_icon = ui.image('./ui_IMG/play.svg').style('width: 15px;')
+                            run_icon = ui.image('./ui/play.svg').style('width: 15px;')
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Mode:').classes('source-title')
@@ -713,10 +333,10 @@ def main_page():
 # ---------------------------------------------------------------------------
 @ui.page('/reconstruction')
 def reconstruction_page():
-    state = {'running': False, 'previewing': False, 'source': 'TUM Dataset', 'live_scanning': False}
+    state = {'running': False, 'previewing': False, 'source': 'TUM Dataset', 'live_scanning': False, 'log': None}
     live_gen = LiveGenerator(output_path=OUTPUT_3D_MODELS_PATH)
 
-    ui.add_head_html(CSS)
+    ui.add_css('./ui/styles.css')
 
     # ── Source & UI Handlers ──────────────────────────────────────────────────
     def update_source_ui(selected: str) -> None:
@@ -775,7 +395,7 @@ def reconstruction_page():
 
             # Reset the toggle button back to its initial state
             live_label.set_text('Start Live Scan')
-            live_icon.set_source('./ui_IMG/cube.svg')
+            live_icon.set_source('./ui/cube.svg')
 
             pc_progress.set_visibility(False)
             state['live_scanning'] = False
@@ -796,7 +416,7 @@ def reconstruction_page():
             status.set_text('Ready')
             status.style('color: #69fdb3')
             live_label.set_text('Start Live Scan')
-            live_icon.set_source('./ui_IMG/cube.svg')
+            live_icon.set_source('./ui/cube.svg')
             pc_progress.set_visibility(False)
             pc_progress_label.set_visibility(False)
             return
@@ -812,7 +432,7 @@ def reconstruction_page():
 
             # Morph the button into a Cancel button
             live_label.set_text('Cancel Scan')
-            live_icon.set_source('./ui_IMG/stop.svg')
+            live_icon.set_source('./ui/stop.svg')
 
             pc_progress.set_visibility(True)
             pc_progress_label.set_visibility(True)
@@ -843,6 +463,7 @@ def reconstruction_page():
                 tum.generate_from_tum(SETTINGS['rgbd_video_dir'], output_path=OUTPUT_3D_MODELS_PATH,
                 on_progress=on_progress)
                 # log.push('Point cloud generation complete!')
+                # this is not working
             except Exception as e:
                 log.push(f'Error: {e}')
             finally:
@@ -857,7 +478,7 @@ def reconstruction_page():
 
     def reset_preview_button():
         preview_label.set_text('Preview Video')
-        preview_icon.set_source('./ui_IMG/play.svg')
+        preview_icon.set_source('./ui/play.svg')
 
     def toggle_preview():
         if state['previewing']:
@@ -882,7 +503,7 @@ def reconstruction_page():
             log.push(f'Playing {len(image_files)} frames in app...')
             state['previewing'] = True
             preview_label.set_text('Stop Preview')
-            preview_icon.set_source('./ui_IMG/stop.svg')
+            preview_icon.set_source('./ui/stop.svg')
 
             def playback_loop():
                 UI_MAX_FPS = 30
@@ -930,17 +551,17 @@ def reconstruction_page():
                         btn_run_tum = ui.element('button').classes('btn-run').on('click', run_point_cloud)
                         with btn_run_tum:
                             ui.label('Generate')
-                            ui.image('./ui_IMG/cube.svg').style('width: 15px;')
+                            ui.image('./ui/cube.svg').style('width: 15px;')
 
                         btn_toggle_preview = ui.element('button').classes('btn-stop').on('click', toggle_preview)
                         with btn_toggle_preview:
                             preview_label = ui.label('Preview Video')
-                            preview_icon = ui.image('./ui_IMG/play.svg').style('width: 15px;')
+                            preview_icon = ui.image('./ui/play.svg').style('width: 15px;')
 
                         btn_start_live = ui.element('button').classes('btn-run').on('click', toggle_live_scan)
                         with btn_start_live:
                             live_label = ui.label('Start Live Scan')
-                            live_icon = ui.image('./ui_IMG/cube.svg').style('width: 15px;')
+                            live_icon = ui.image('./ui/cube.svg').style('width: 15px;')
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Data Source:').classes('source-title')
@@ -1014,7 +635,7 @@ def settings_page():
         elif result and type == 'output':
             state['outputPath'] = os.path.join(result[0], 'data', 'output_videos', 'output.mp4')
 
-    ui.add_head_html(CSS)
+    ui.add_css('./ui/styles.css')
 
     with ui.element('div').classes('app-container'):
         build_sidebar('')
@@ -1084,4 +705,4 @@ if __name__ in {"__main__", "__mp_main__"}:  # nicegui relaunches the script und
     app.native.window_args['resizable'] = True
     app.native.window_args['min_size'] = (1200, 620)
     app.native.settings['ALLOW_DOWNLOADS'] = True
-    ui.run(native=True, window_size=(1200, 700), title='COMP 4990 — Computer Vision')
+    ui.run(native=True, window_size=(1200, 700), title='SpatialSense')
