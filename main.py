@@ -110,7 +110,7 @@ def build_sidebar(active: str) -> None:
 # ---------------------------------------------------------------------------
 @ui.page('/')
 def main_page():
-    state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence'], 'tracking': True}
+    state = {'running': False, 'source': 'Local Video File', 'tolerance': SETTINGS['s_tolerence'], 'tracking': True, 'save_video': True}
 
     ui.add_css('./ui/styles.css')
 
@@ -176,8 +176,8 @@ def main_page():
                     active_tracker = Tracker()
                 else:
                     active_detector = Detector()
-                handler = VideoHandler(source, SETTINGS['output_path'])
-                safe_log(f'Mode: {"Tracking" if state["tracking"] else "Detection"} | Connected: {handler.width}x{handler.height} @ {handler.fps} FPS')
+                handler = VideoHandler(source, SETTINGS['output_path'], save_video=state['save_video'])
+                safe_log(f'Mode: {"Tracking" if state["tracking"] else "Detection"} | Connected: {handler.width}x{handler.height} @ {handler.fps} FPS | Save: {"On" if state["save_video"] else "Off"}')
 
                 UI_MAX_FPS = 20  # cap ui refreshes so the browser doesn't get flooded with jpeg frames
                 ui_interval = 1.0 / UI_MAX_FPS
@@ -238,7 +238,10 @@ def main_page():
                             time.sleep(sleep_time)
 
                 handler.release()
-                safe_log(f'Saved to: {SETTINGS["output_path"]}')
+                if state['save_video']:
+                    safe_log(f'Saved to: {SETTINGS["output_path"]}')
+                else:
+                    safe_log('Finished (video not saved).')
             except Exception as e:
                 safe_log(f'Error: {e}')
             finally:
@@ -288,6 +291,20 @@ def main_page():
                                 ui.label(mode_name)
                             mode_btns[mode_name] = mbtn
                         update_mode_buttons(state['tracking'])
+
+                    with ui.element('div').classes('source-section'):
+                        ui.label('Save Video:').classes('source-title')
+                        def toggle_save_video():
+                            if state['running']:
+                                log.push('Stop detection before changing save setting.')
+                                return
+                            state['save_video'] = not state['save_video']
+                            save_btn.classes(add='active-src' if state['save_video'] else '')
+                            save_btn.classes(remove='' if state['save_video'] else 'active-src')
+                            log.push(f'Save video: {"On" if state["save_video"] else "Off"}')
+                        save_btn = ui.element('button').classes('source-btn active-src').on('click', toggle_save_video)
+                        with save_btn:
+                            ui.label('Save Output Video')
 
                     with ui.element('div').classes('source-section'):
                         ui.label('Video Source:').classes('source-title')

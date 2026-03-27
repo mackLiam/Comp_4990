@@ -5,7 +5,7 @@ import time
 import threading
 
 class VideoHandler:
-    def __init__(self, source, output_path):
+    def __init__(self, source, output_path, save_video=True):
         """
         Initializes video input and output streams.
         """
@@ -60,12 +60,14 @@ class VideoHandler:
             if is_rtsp:
                 print(f"Warning: Could not determine FPS for RTSP. Using fallback: {self.fps}")
 
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        # Setup VideoWriter
-        fourcc = cv.VideoWriter_fourcc(*'mp4v')
-        self.out = cv.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
+        # Setup VideoWriter (only if saving is requested)
+        self.save_video = save_video
+        if self.save_video:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            fourcc = cv.VideoWriter_fourcc(*'mp4v')
+            self.out = cv.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
+        else:
+            self.out = None
 
         # Threaded reading for live sources
         if self.is_live:
@@ -94,8 +96,9 @@ class VideoHandler:
         return self.cap.read()
 
     def write_frame(self, frame):
-        """Writes the processed frame to the output file."""
-        self.out.write(frame)
+        """Writes the processed frame to the output file (no-op if save_video=False)."""
+        if self.save_video and self.out is not None:
+            self.out.write(frame)
 
     def release(self):
         """Releases all resources and closes windows."""
@@ -103,7 +106,8 @@ class VideoHandler:
         if hasattr(self, 'thread'):
             self.thread.join(timeout=1.0)
         self.cap.release()
-        self.out.release()
+        if self.out is not None:
+            self.out.release()
         cv.destroyAllWindows()
 
     @staticmethod
